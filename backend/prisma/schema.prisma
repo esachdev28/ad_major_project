@@ -1,0 +1,132 @@
+// ==============================================================================
+// schema.prisma — API Sentinel Database Schema
+//
+// 1. Why this file exists:
+//    Defines the database models, relations, and data types for API Sentinel using
+//    Prisma ORM 6. It acts as the single source of truth for our PostgreSQL schema.
+//
+// 2. What its responsibilities are:
+//    - Configure the PostgreSQL datasource using the DATABASE_URL environment variable.
+//    - Configure the Prisma Client JS generator.
+//    - Define the core entity models: User, APIEndpoint, HealthCheck, Incident, APIVersion.
+//    - Establish relational integrity (foreign keys, cascading deletes, indexes).
+//
+// 3. Database Request Flow:
+//    React Dashboard -> Express Route -> Prisma Client -> PostgreSQL Database
+//    -> Prisma Response -> Express JSON Response -> React State -> UI Update.
+// ==============================================================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ------------------------------------------------------------------------------
+// Model 1: User
+// Represents developers or teams who own and monitor registered API endpoints.
+// Note: Authentication is not implemented in Day 1; this model provides the foundation.
+// ------------------------------------------------------------------------------
+model User {
+  id        String        @id @default(cuid())
+  name      String
+  email     String        @unique
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  // Relationships: One User can own multiple APIEndpoint records
+  endpoints APIEndpoint[]
+
+  @@map("users")
+}
+
+// ------------------------------------------------------------------------------
+// Model 2: APIEndpoint
+// Represents an external or internal HTTP API registered for observability.
+// ------------------------------------------------------------------------------
+model APIEndpoint {
+  id          String        @id @default(cuid())
+  name        String
+  url         String
+  method      String        @default("GET")
+  description String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Optional owner relationship: If a user is deleted, endpoint remains with userId null
+  userId      String?
+  user        User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Relationships: One endpoint has many health checks, incidents, and version specs
+  healthChecks HealthCheck[]
+  incidents    Incident[]
+  versions     APIVersion[]
+
+  @@index([userId])
+  @@index([url])
+  @@map("api_endpoints")
+}
+
+// ------------------------------------------------------------------------------
+// Model 3: HealthCheck
+// Records individual ping/probe results for an endpoint, tracking uptime and latency.
+// ------------------------------------------------------------------------------
+model HealthCheck {
+  id           String      @id @default(cuid())
+  endpointId   String
+  statusCode   Int?
+  latency      Int?        // Response latency in milliseconds
+  isHealthy    Boolean
+  errorMessage String?
+  checkedAt    DateTime    @default(now())
+
+  // Cascade delete: If the parent APIEndpoint is deleted, delete its check logs
+  endpoint     APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@index([checkedAt])
+  @@index([endpointId, checkedAt(sort: Desc)])
+  @@map("health_checks")
+}
+
+// ------------------------------------------------------------------------------
+// Model 4: Incident
+// Records operational disruptions or downtime detected for an API endpoint.
+// ------------------------------------------------------------------------------
+model Incident {
+  id          String      @id @default(cuid())
+  endpointId  String
+  title       String
+  description String?
+  status      String      @default("OPEN") // OPEN, INVESTIGATING, RESOLVED
+  createdAt   DateTime    @default(now())
+  resolvedAt  DateTime?
+
+  // Cascade delete: If the parent APIEndpoint is deleted, delete associated incidents
+  endpoint    APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@index([status])
+  @@map("incidents")
+}
+
+// ------------------------------------------------------------------------------
+// Model 5: APIVersion
+// Stores API contract specifications (OpenAPI/Swagger) for version diffing.
+// ------------------------------------------------------------------------------
+model APIVersion {
+  id            String      @id @default(cuid())
+  endpointId    String
+  version       String      // e.g. "v1.0.0", "v1.1.0"
+  specification String      @db.Text // Full OpenAPI JSON or YAML content
+  createdAt     DateTime    @default(now())
+
+  // Cascade delete: If the parent APIEndpoint is deleted, delete version history
+  endpoint      APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@map("api_versions")
+}

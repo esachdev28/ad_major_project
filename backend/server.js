@@ -4,45 +4,41 @@
  * 1. Why this file exists:
  *    The main entry point for the API Sentinel full-stack Express application. It initializes
  *    the Express server, registers core middleware (JSON parsing, static assets), mounts API routes,
- *    and begins listening for incoming HTTP connections on a single unified port.
+ *    manages database connections with Prisma, and begins listening on a single unified port.
  * 
  * 2. What its responsibilities are:
  *    - Load environment variables from `.env` using dotenv.
  *    - Parse incoming JSON payloads using `express.json()`.
- *    - Serve the React frontend static build files using built-in `express.static()`.
- *      (By serving frontend and backend from the same port, CORS is completely bypassed naturally!)
+ *    - Serve React frontend static build files using built-in `express.static()`.
  *    - Mount route modules (`healthRoutes` and `dashboardRoutes`).
- *    - Provide a fallback 404 handler for unknown API routes.
- *    - Provide a wildcard SPA fallback for React client routing.
- *    - Centralized error handling middleware.
- *    - Start the HTTP server on a configurable port.
+ *    - Provide graceful process shutdown to disconnect Prisma when terminating.
+ *    - Fallback 404 handler for API routes and wildcard SPA fallback for client routes.
+ *    - Centralized error-handling middleware.
+ *    - Start the HTTP server on configurable PORT.
  * 
  * 3. Which functions/handlers it contains:
  *    - Express application initialization (`const app = express()`).
- *    - Middleware configuration calls (`app.use(...)`).
- *    - API router mounting (`/api/health`, `/api/dashboard`).
- *    - Static file serving (`express.static(...)`).
- *    - Global error handler middleware (`(err, req, res, next) => ...`).
+ *    - Route mounting (`/api/health`, `/api/dashboard`).
+ *    - Graceful shutdown handlers (`shutdown(signal)` for SIGINT/SIGTERM).
  *    - Server startup listener (`app.listen(...)`).
  * 
  * 4. How it communicates with other files:
+ *    - Imports `prisma` from `./lib/prisma` for connection teardown.
  *    - Imports `healthRoutes.js` and mounts it at `/api/health`.
  *    - Imports `dashboardRoutes.js` and mounts it at `/api/dashboard`.
  *    - Serves `frontend/dist` directly to the client browser.
  *    - Reads PORT from `process.env` (configured via `.env` or defaults to 5001).
  * 
- * 5. Why this chosen approach is appropriate:
- *    - 100% compliant with standard first-year B.Tech syllabus (core Express & Node.js).
- *    - Eliminates the need for external `cors` libraries: both client UI and API endpoints
- *      share the EXACT same origin (protocol, domain, port).
- *    - Clean, elegant, and very easy to defend in college viva examination.
+ * 5. Database Request Flow:
+ *    React Dashboard -> Express Route -> Prisma Client -> PostgreSQL
+ *    -> Prisma Response -> Express JSON Response -> React State -> UI Update.
  */
 
-// Load environment variables from .env file (if present)
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const express = require('express');
-const path = require('path');
+const prisma = require('./lib/prisma');
 
 // Import route modules
 const healthRoutes = require('./routes/healthRoutes');
@@ -102,6 +98,7 @@ app.get('*', (req, res) => {
         notice: 'React frontend build not found. Run "cd frontend && npm run build" to serve the UI here.',
         endpoints: {
           health: '/api/health',
+          dbHealth: '/api/health/db',
           stats: '/api/dashboard/stats'
         }
       });
@@ -123,13 +120,33 @@ app.use((err, req, res, next) => {
 });
 
 // ==========================================
+// Graceful Process Termination
+// ==========================================
+// Ensures Prisma disconnects properly when Node.js process is stopped (Ctrl+C / SIGTERM)
+const handleShutdown = async (signal) => {
+  console.log(`\n[${new Date().toISOString()}] Received ${signal}. Disconnecting Prisma client...`);
+  try {
+    await prisma.$disconnect();
+    console.log('🛡️  Prisma client disconnected gracefully.');
+  } catch (error) {
+    console.error('Error during Prisma disconnect:', error.message);
+  } finally {
+    process.exit(0);
+  }
+};
+
+process.on('SIGINT', () => handleShutdown('SIGINT'));
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+
+// ==========================================
 // Start Server
 // ==========================================
 app.listen(PORT, () => {
   console.log(`===============================================`);
-  console.log(`🛡️  API Sentinel Unified Server (Zero-CORS Architecture)`);
+  console.log(`🛡️  API Sentinel Unified Server with PostgreSQL & Prisma`);
   console.log(`🚀 Unified Web & API Server: http://localhost:${PORT}`);
-  console.log(`🩺 Health check endpoint:   http://localhost:${PORT}/api/health`);
+  console.log(`🩺 Server Health check:     http://localhost:${PORT}/api/health`);
+  console.log(`🗄️  Database Health check:   http://localhost:${PORT}/api/health/db`);
   console.log(`📊 Dashboard stats endpoint: http://localhost:${PORT}/api/dashboard/stats`);
   console.log(`===============================================`);
 });

@@ -7,14 +7,15 @@
  *    the visual sections of the dashboard.
  * 
  * 2. What its responsibilities are:
- *    - Fetch backend health via `checkHealth()` and statistics via `getDashboardStats()`
- *      on component mount using React's `useEffect` hook.
+ *    - Fetch backend health via `checkHealth()`, database health via `checkDbHealth()`,
+ *      and statistics via `getDashboardStats()` on component mount using React's `useEffect` hook.
  *    - Maintain React state for:
  *      * `stats`: The 4 core metrics (Total APIs, Healthy APIs, Failed APIs, Average Latency).
  *      * `backendStatus`: 'checking' | 'online' | 'offline'.
- *      * `dataSource`: Tag confirming data source (e.g. 'demo').
+ *      * `dbStatus`: 'checking' | 'online' | 'offline'.
+ *      * `dataSource`: Tag confirming data source (e.g. 'database').
  *      * `isLoading`: Boolean indicator for network requests.
- *      * `error`: Error message string if backend communication fails.
+ *      * `error`: Error message string if backend or database communication fails.
  *    - Render the dashboard header, demo notice, 4 StatCards, API Health Overview table,
  *      and Recent Activity feed.
  *    - Ensure the UI NEVER crashes if the Express backend is offline.
@@ -37,7 +38,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
-import { checkHealth, getDashboardStats } from '../services/api';
+import { checkHealth, checkDbHealth, getDashboardStats } from '../services/api';
 
 export default function Dashboard() {
   // State: API statistics received from Express backend
@@ -46,13 +47,16 @@ export default function Dashboard() {
   // State: backend health and connectivity ('checking' | 'online' | 'offline')
   const [backendStatus, setBackendStatus] = useState('checking');
 
+  // State: database connectivity ('checking' | 'online' | 'offline')
+  const [dbStatus, setDbStatus] = useState('checking');
+
   // State: meta information about data source (from Express)
   const [dataSource, setDataSource] = useState('');
 
   // State: loading indicator
   const [isLoading, setIsLoading] = useState(true);
 
-  // State: friendly error message if backend is unreachable
+  // State: friendly error message if backend or database is unreachable
   const [error, setError] = useState(null);
 
   /**
@@ -64,15 +68,17 @@ export default function Dashboard() {
     setIsLoading(true);
     setError(null);
     setBackendStatus('checking');
+    setDbStatus('checking');
 
     try {
-      // Execute health check and stats fetch concurrently
-      const [healthResult, statsResult] = await Promise.allSettled([
+      // Execute health check, db check, and stats fetch concurrently
+      const [healthResult, dbResult, statsResult] = await Promise.allSettled([
         checkHealth(),
+        checkDbHealth(),
         getDashboardStats(),
       ]);
 
-      // 1. Process health check result
+      // 1. Process server health check result
       if (healthResult.status === 'fulfilled' && healthResult.value.success) {
         setBackendStatus('online');
       } else {
@@ -81,16 +87,31 @@ export default function Dashboard() {
         setError(reason);
       }
 
-      // 2. Process statistics result
+      // 2. Process database health check result
+      if (dbResult.status === 'fulfilled' && dbResult.value.success) {
+        setDbStatus('online');
+      } else {
+        setDbStatus('offline');
+      }
+
+      // 3. Process statistics result
       if (statsResult.status === 'fulfilled' && statsResult.value.success) {
         setStats(statsResult.value.data);
-        setDataSource(statsResult.value.dataSource || 'demo');
-      } else if (healthResult.status !== 'fulfilled') {
-        // If both failed, we are definitely offline
+        setDataSource(statsResult.value.dataSource || 'database');
+      } else {
         setStats(null);
+        if (healthResult.status === 'fulfilled') {
+          // Express server is online, but database query or connectivity failed
+          const reason =
+            statsResult.reason?.message ||
+            dbResult.reason?.message ||
+            'PostgreSQL database is currently unreachable.';
+          setError(reason);
+        }
       }
     } catch (err) {
       setBackendStatus('offline');
+      setDbStatus('offline');
       setError(err.message || 'An unexpected error occurred while connecting to the backend.');
       setStats(null);
     } finally {
@@ -119,6 +140,9 @@ export default function Dashboard() {
     { id: 3, type: 'bullet-green', title: 'Contract verified', time: '1 hour ago', desc: 'User Service v1.4 OpenAPI matches production schema.' },
     { id: 4, type: 'bullet-blue', title: 'Daily baseline latency recorded', time: '3 hours ago', desc: 'Fleet average computed at 245 ms.' },
   ];
+
+  // Total number of endpoints that have been checked at least once
+  const totalChecked = (stats?.healthyApis || 0) + (stats?.failedApis || 0);
 
   return (
     <div className="main-wrapper">
@@ -149,16 +173,38 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Demo Data Notice */}
+        {/* Database Unavailability Alert (Displays if Express is running but PostgreSQL failed) */}
+        {backendStatus === 'online' && (dbStatus === 'offline' || error) && (
+          <div className="backend-alert" style={{ borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)' }}>
+            <span style={{ fontSize: '1.5rem' }}>⚠️</span>
+            <div>
+              <h4 style={{ color: '#f59e0b' }}>Database Connection Notice</h4>
+              <p>
+                {error || 'Could not connect to PostgreSQL database via Prisma.'}
+                {' '}Make sure PostgreSQL is running on port 5432 and migrations have been executed:
+              </p>
+              <p style={{ marginTop: '0.4rem' }}>
+                <code>cd backend && npx prisma migrate dev</code>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Data Source Notice */}
         <div className="demo-banner">
           <div className="demo-banner-content">
-            <span className="demo-tag">{dataSource ? `${dataSource.toUpperCase()} MODE` : 'DEMO MODE'}</span>
+            <span className="demo-tag" style={dataSource === 'database' ? { backgroundColor: '#10b981' } : {}}>
+              {dataSource ? `${dataSource.toUpperCase()} MODE` : 'DATABASE MODE'}
+            </span>
             <p>
-              All metrics below are illustrative demo data delivered by Express (<code>GET /api/dashboard/stats</code>)
-              for Day 1 foundation. No real endpoints are being polled.
+              {dataSource === 'database' ? (
+                <>Metrics computed live from <strong>PostgreSQL</strong> via Prisma ORM (<code>GET /api/dashboard/stats</code>).</>
+              ) : (
+                <>All metrics below are delivered by Express (<code>GET /api/dashboard/stats</code>) for Day 1 foundation.</>
+              )}
             </p>
           </div>
-          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Day 1 Commit 1</span>
+          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Day 1 Commit 2</span>
         </div>
 
         {/* 4 Core Quantitative Statistics Cards */}
@@ -176,7 +222,11 @@ export default function Dashboard() {
             value={stats?.healthyApis}
             icon="✅"
             colorVariant="green"
-            subtitle="Passing checks (75%)"
+            subtitle={
+              totalChecked > 0
+                ? `${Math.round(((stats.healthyApis || 0) / totalChecked) * 100)}% uptime`
+                : 'No checks yet'
+            }
             isLoading={isLoading}
           />
           <StatCard
@@ -184,7 +234,13 @@ export default function Dashboard() {
             value={stats?.failedApis}
             icon="❌"
             colorVariant="red"
-            subtitle="Incident flagged"
+            subtitle={
+              stats?.failedApis > 0
+                ? 'Incidents flagged'
+                : totalChecked > 0
+                ? 'All clear'
+                : 'No checks yet'
+            }
             isLoading={isLoading}
           />
           <StatCard
@@ -192,7 +248,7 @@ export default function Dashboard() {
             value={stats?.averageLatency}
             icon="⚡"
             colorVariant="amber"
-            subtitle="P95 fleet response time"
+            subtitle="Fleet response time"
             isLoading={isLoading}
           />
         </section>
