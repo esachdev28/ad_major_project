@@ -23,18 +23,23 @@
  *    - Direct and lightweight without unnecessary routing libraries on Day 1.
  */
 
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
+import Endpoints from './pages/Endpoints';
 
 export default function App() {
+  const [activeItem, setActiveItem] = useState('Dashboard');
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+  const refreshDashboard = useCallback(() => setDashboardRefreshKey((key) => key + 1), []);
   return (
     <div className="app-container">
       {/* Persistent Left Navigation */}
-      <Sidebar activeItem="Dashboard" />
+      <Sidebar activeItem={activeItem} onNavigate={setActiveItem} />
 
-      {/* Main View Area (Dashboard) */}
-      <Dashboard />
+      {activeItem === 'API Endpoints'
+        ? <Endpoints onEndpointsChanged={refreshDashboard} />
+        : <Dashboard refreshKey={dashboardRefreshKey} />}
     </div>
   );
 }

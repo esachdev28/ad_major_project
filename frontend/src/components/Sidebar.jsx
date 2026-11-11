@@ -32,11 +32,11 @@
 
 import React from 'react';
 
-export default function Sidebar({ activeItem = 'Dashboard' }) {
+export default function Sidebar({ activeItem = 'Dashboard', onNavigate }) {
   // Navigation menu items required by Part 4
   const navItems = [
     { name: 'Dashboard', icon: '📊', isImplemented: true },
-    { name: 'API Endpoints', icon: '🔗', isImplemented: false },
+    { name: 'API Endpoints', icon: '🔗', isImplemented: true },
     { name: 'Incidents', icon: '🚨', isImplemented: false },
     { name: 'Contract Analysis', icon: '📄', isImplemented: false },
     { name: 'Dependencies', icon: '🕸️', isImplemented: false },
@@ -60,10 +60,12 @@ export default function Sidebar({ activeItem = 'Dashboard' }) {
           const isActive = activeItem === item.name;
 
           return (
-            <div
+            <button
               key={item.name}
               className={`nav-item ${isActive ? 'active' : ''}`}
               title={item.isImplemented ? item.name : `${item.name} (Upcoming in later commits)`}
+              onClick={() => item.isImplemented && onNavigate?.(item.name)}
+              disabled={!item.isImplemented}
             >
               <div className="nav-item-content">
                 <span className="nav-icon">{item.icon}</span>
@@ -72,7 +74,7 @@ export default function Sidebar({ activeItem = 'Dashboard' }) {
               {!item.isImplemented && (
                 <span className="nav-badge-soon">Soon</span>
               )}
-            </div>
+            </button>
           );
         })}
       </nav>

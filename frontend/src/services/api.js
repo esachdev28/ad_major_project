@@ -40,15 +40,13 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
  * @param {string} endpoint - The path to fetch (e.g. '/api/health')
  * @returns {Promise<any>} - Parsed JSON response
  */
-async function apiRequest(endpoint) {
+async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
 
   try {
     const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...options.headers },
     });
 
     if (!response.ok) {
@@ -106,6 +104,26 @@ export async function checkDbHealth() {
  */
 export async function getDashboardStats() {
   return await apiRequest('/api/dashboard/stats');
+}
+
+export async function getEndpoints() {
+  return apiRequest('/api/endpoints');
+}
+
+export async function getEndpoint(id) {
+  return apiRequest(`/api/endpoints/${encodeURIComponent(id)}`);
+}
+
+export async function createEndpoint(endpoint) {
+  return apiRequest('/api/endpoints', { method: 'POST', body: JSON.stringify(endpoint) });
+}
+
+export async function updateEndpoint(id, endpoint) {
+  return apiRequest(`/api/endpoints/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(endpoint) });
+}
+
+export async function deleteEndpoint(id) {
+  return apiRequest(`/api/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export { API_BASE_URL };

@@ -43,6 +43,7 @@ const prisma = require('./lib/prisma');
 // Import route modules
 const healthRoutes = require('./routes/healthRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const endpointRoutes = require('./routes/endpointRoutes');
 
 const app = express();
 
@@ -78,6 +79,7 @@ app.use(express.static(distPath));
 // Mount dedicated API routers
 app.use('/api/health', healthRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/endpoints', endpointRoutes);
 
 // Fallback for unmatched /api requests (returns clean JSON 404)
 app.use('/api', (req, res) => {
@@ -112,6 +114,9 @@ app.get('*', (req, res) => {
 
 // Centralized error-handling middleware
 app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && Object.hasOwn(err, 'body')) {
+    return res.status(400).json({ success: false, message: 'Request body contains invalid JSON.' });
+  }
   console.error('Unhandled server error:', err.stack || err.message);
   res.status(500).json({
     success: false,

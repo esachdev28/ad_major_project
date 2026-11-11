@@ -2,7 +2,7 @@
 
 **API Sentinel** is an API observability, health monitoring, and breaking-change detection platform designed to protect modern microservice ecosystems.
 
-This repository represents **Day 1, Commit 2** of our 5-day development sprint: extending our foundation with a robust relational database layer powered by **PostgreSQL** and **Prisma ORM 6**.
+This repository builds on **Day 1, Commit 2** with **Day 2, Commit 1**: API endpoint CRUD backed by PostgreSQL and Prisma ORM 6.
 
 ---
 
@@ -34,7 +34,7 @@ Modern web applications depend on dozens of internal and third-party APIs. When 
 - Identifying integrations and services potentially affected by schema diffs.
 - Exposing diagnostic and remediation tools via MCP (Model Context Protocol).
 
-> **Current Scope (Commit 2):** In this commit, we established our database foundation with PostgreSQL and Prisma ORM 6, replacing the previous static demo metrics with live database queries and introducing a database health-check probe. Automated polling, OAuth, and OpenAPI diff engines will be added in subsequent days.
+> **Current Scope (Day 2, Commit 1):** API endpoints can be registered, listed, edited, and deleted using the existing APIEndpoint model. Dashboard statistics and database health checks remain database-backed. Automated polling, OAuth, and OpenAPI diff engines are not implemented yet.
 
 ---
 
@@ -55,6 +55,11 @@ Modern web applications depend on dozens of internal and third-party APIs. When 
 - **React Frontend:**
   - Updated API service layer (`frontend/src/services/api.js`) with `checkDbHealth()`.
   - Dynamic UI badge displaying `DATABASE MODE` when live database statistics are returned.
+- **API Endpoint Management (Day 2, Commit 1):**
+  - Create, list, view, update, and delete API endpoint records through Express routes backed by Prisma.
+  - Validate endpoint names, HTTP/HTTPS URLs, supported methods, and allowed request fields.
+  - Cascade deletion removes related health checks, incidents, and API versions as defined by the existing Prisma schema.
+  - The UI displays registered endpoints as `NOT MONITORED` until monitoring is implemented.
 
 ---
 
@@ -88,10 +93,11 @@ ad_major_project/
 │   │   │   └── StatCard.jsx      # Metric cards with loading skeletons
 │   │   │
 │   │   ├── pages/
-│   │   │   └── Dashboard.jsx     # Main dashboard view orchestrating data & layout
+│   │   │   ├── Dashboard.jsx     # Main dashboard view orchestrating data & layout
+│   │   │   └── Endpoints.jsx     # Database-backed API endpoint management
 │   │   │
 │   │   ├── services/
-│   │   │   └── api.js            # Centralized API service (health, db, stats)
+│   │   │   └── api.js            # Centralized API service (health, stats, endpoint CRUD)
 │   │   │
 │   │   ├── App.jsx               # Root layout shell (Sidebar + Dashboard)
 │   │   ├── main.jsx              # React DOM entry point
@@ -112,7 +118,8 @@ ad_major_project/
 │   │
 │   ├── routes/
 │   │   ├── healthRoutes.js       # GET /api/health & GET /api/health/db
-│   │   └── dashboardRoutes.js    # GET /api/dashboard/stats (Prisma database queries)
+│   │   ├── dashboardRoutes.js    # GET /api/dashboard/stats (Prisma database queries)
+│   │   └── endpointRoutes.js     # API endpoint CRUD routes
 │   │
 │   ├── server.js                 # Server entry point, middleware & shutdown hooks
 │   ├── package.json              # Backend scripts and dependencies
@@ -239,6 +246,13 @@ npm start
 | `GET` | `/api/health` | Server health check | `{"success":true,"message":"API Sentinel backend is running"}` |
 | `GET` | `/api/health/db` | Database health check (`SELECT 1`) | `{"success":true,"message":"Database connection successful"}` |
 | `GET` | `/api/dashboard/stats` | Dynamic database metrics | `{"success":true,"dataSource":"database","data":{"totalApis":0,"healthyApis":0,"failedApis":0,"averageLatency":"0 ms"}}` |
+| `GET` | `/api/endpoints` | List endpoints (newest first) | `{"success":true,"data":[]}` |
+| `GET` | `/api/endpoints/:id` | Retrieve one endpoint | `{"success":true,"data":{...}}` |
+| `POST` | `/api/endpoints` | Register an endpoint | `{"success":true,"data":{...}}` |
+| `PUT` | `/api/endpoints/:id` | Update supplied endpoint fields | `{"success":true,"data":{...}}` |
+| `DELETE` | `/api/endpoints/:id` | Delete endpoint and cascade-related records | `{"success":true,"message":"API endpoint and its associated records were deleted."}` |
+
+Endpoint registration accepts `name`, `url`, `method`, and optional `description`. Methods are limited to `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`; URLs must use HTTP or HTTPS. No monitoring request is sent to a submitted URL.
 
 ### Testing Endpoints via Command Line
 ```bash
