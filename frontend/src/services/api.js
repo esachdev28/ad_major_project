@@ -106,8 +106,9 @@ export async function getDashboardStats() {
   return await apiRequest('/api/dashboard/stats');
 }
 
-export async function getEndpoints() {
-  return apiRequest('/api/endpoints');
+export async function getEndpoints(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  return apiRequest(query ? `/api/endpoints?${query}` : '/api/endpoints');
 }
 
 export async function getEndpoint(id) {
@@ -124,6 +125,10 @@ export async function updateEndpoint(id, endpoint) {
 
 export async function deleteEndpoint(id) {
   return apiRequest(`/api/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function checkEndpointNow(id) {
+  return apiRequest(`/api/endpoints/${encodeURIComponent(id)}/check`, { method: 'POST' });
 }
 
 export { API_BASE_URL };

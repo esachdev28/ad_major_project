@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node prisma/seed.js",
-    "worker": "node workers/monitoringWorker.js"
+    "worker": "node workers/monitoringWorker.js",
+    "test": "node tests/step2_endpoints.test.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

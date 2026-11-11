@@ -48,22 +48,27 @@ model User {
 // Represents an external or internal HTTP API registered for observability.
 // ------------------------------------------------------------------------------
 model APIEndpoint {
-  id          String        @id @default(cuid())
-  name        String
-  url         String
-  method      String        @default("GET")
-  description String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id             String        @id @default(cuid())
+  name           String
+  url            String
+  method         String        @default("GET")
+  description    String?
+  isActive       Boolean       @default(true)
+  interval       Int           @default(60) // Monitoring interval in seconds
+  timeout        Int           @default(5000) // Request timeout in milliseconds
+  expectedStatus Int           @default(200) // Expected HTTP status code
+  headers        String?       // JSON string of custom request headers
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   // Optional owner relationship: If a user is deleted, endpoint remains with userId null
-  userId      String?
-  user        User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   // Relationships: One endpoint has many health checks, incidents, and version specs
-  healthChecks HealthCheck[]
-  incidents    Incident[]
-  versions     APIVersion[]
+  healthChecks   HealthCheck[]
+  incidents      Incident[]
+  versions       APIVersion[]
 
   @@index([userId])
   @@index([url])

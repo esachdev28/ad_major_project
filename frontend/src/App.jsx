@@ -39,7 +39,7 @@ export default function App() {
 
       {activeItem === 'API Endpoints'
         ? <Endpoints onEndpointsChanged={refreshDashboard} />
-        : <Dashboard refreshKey={dashboardRefreshKey} />}
+        : <Dashboard refreshKey={dashboardRefreshKey} onNavigateToEndpoints={() => setActiveItem('API Endpoints')} />}
     </div>
   );
 }

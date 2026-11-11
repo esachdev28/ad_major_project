@@ -38,11 +38,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
-import { checkHealth, checkDbHealth, getDashboardStats } from '../services/api';
+import { checkHealth, checkDbHealth, getDashboardStats, getEndpoints } from '../services/api';
 
-export default function Dashboard({ refreshKey = 0 }) {
+export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
   // State: API statistics received from Express backend
   const [stats, setStats] = useState(null);
+  const [endpoints, setEndpoints] = useState([]);
 
   // State: backend health and connectivity ('checking' | 'online' | 'offline')
   const [backendStatus, setBackendStatus] = useState('checking');
@@ -71,11 +72,12 @@ export default function Dashboard({ refreshKey = 0 }) {
     setDbStatus('checking');
 
     try {
-      // Execute health check, db check, and stats fetch concurrently
-      const [healthResult, dbResult, statsResult] = await Promise.allSettled([
+      // Execute health check, db check, stats, and endpoints fetch concurrently
+      const [healthResult, dbResult, statsResult, endpointsResult] = await Promise.allSettled([
         checkHealth(),
         checkDbHealth(),
         getDashboardStats(),
+        getEndpoints(),
       ]);
 
       // 1. Process server health check result
@@ -108,6 +110,11 @@ export default function Dashboard({ refreshKey = 0 }) {
             'PostgreSQL database is currently unreachable.';
           setError(reason);
         }
+      }
+
+      // 4. Process registered endpoints
+      if (endpointsResult.status === 'fulfilled' && endpointsResult.value.success) {
+        setEndpoints(endpointsResult.value.data || []);
       }
     } catch (err) {
       setBackendStatus('offline');
@@ -245,7 +252,16 @@ export default function Dashboard({ refreshKey = 0 }) {
               <h2 className="panel-title">
                 <span>🛡️</span> API Health Overview
               </h2>
-              <span className="panel-badge">Monitoring not enabled</span>
+              {onNavigateToEndpoints ? (
+                <button
+                  onClick={onNavigateToEndpoints}
+                  style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}
+                >
+                  Manage Fleet ({endpoints.length}) ➔
+                </button>
+              ) : (
+                <span className="panel-badge">Database-Backed</span>
+              )}
             </div>
 
             <div className="table-container">
@@ -253,13 +269,42 @@ export default function Dashboard({ refreshKey = 0 }) {
                 <thead>
                   <tr>
                     <th>Method</th>
-                    <th>Path</th>
-                    <th>Service</th>
+                    <th>Endpoint</th>
+                    <th>Uptime</th>
                     <th>Latency</th>
                     <th>Status</th>
                   </tr>
                 </thead>
-                <tbody><tr><td colSpan="5">Endpoint health monitoring has not been implemented yet.</td></tr></tbody>
+                <tbody>
+                  {endpoints.length === 0 ? (
+                    <tr><td colSpan="5">No API endpoints registered yet.</td></tr>
+                  ) : (
+                    endpoints.slice(0, 5).map((ep) => {
+                      const check = ep.latestCheck;
+                      const statusText = check ? (check.isHealthy ? 'Healthy' : 'Failed') : 'Pending';
+                      const statusClass = check ? (check.isHealthy ? 'healthy' : 'failed') : '';
+                      return (
+                        <tr key={ep.id}>
+                          <td>
+                            <span className={`api-method method-${ep.method.toLowerCase()}`}>
+                              {ep.method}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="api-path" title={ep.url}>{ep.name}</span>
+                          </td>
+                          <td>{ep.uptime ?? 100}%</td>
+                          <td>{check?.latency ? `${check.latency} ms` : '—'}</td>
+                          <td>
+                            <span className={`pill-status ${statusClass}`}>
+                              ● {statusText}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
               </table>
             </div>
           </div>
@@ -268,12 +313,38 @@ export default function Dashboard({ refreshKey = 0 }) {
           <div className="panel-card">
             <div className="panel-header">
               <h2 className="panel-title">
-                <span>📋</span> Recent Activity
+                <span>📋</span> Recent Probe Activity
               </h2>
-              <span className="panel-badge">No activity records</span>
+              <span className="panel-badge">Live Telemetry</span>
             </div>
 
-            <p className="endpoint-state">Activity tracking has not been implemented yet.</p>
+            {endpoints.filter((ep) => ep.latestCheck).length === 0 ? (
+              <p className="endpoint-state">No health probes executed yet. Trigger a manual probe from API Endpoints.</p>
+            ) : (
+              <div className="activity-list">
+                {endpoints
+                  .filter((ep) => ep.latestCheck)
+                  .slice(0, 4)
+                  .map((ep) => (
+                    <div key={ep.id} className="activity-item">
+                      <div className={`activity-icon-bullet ${ep.latestCheck.isHealthy ? 'bullet-green' : 'bullet-red'}`} />
+                      <div>
+                        <div className="activity-text">
+                          <strong>{ep.name}</strong>
+                          <div>
+                            {ep.latestCheck.isHealthy
+                              ? `HTTP ${ep.latestCheck.statusCode} verified in ${ep.latestCheck.latency} ms`
+                              : ep.latestCheck.errorMessage || `HTTP ${ep.latestCheck.statusCode || 'ERR'} failed`}
+                          </div>
+                        </div>
+                        <div className="activity-time">
+                          {new Date(ep.latestCheck.checkedAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
 
         </section>
