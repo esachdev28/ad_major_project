@@ -1,0 +1,39 @@
+services:
+  # In-memory queue and caching broker for background monitoring jobs
+  redis:
+    image: redis:7-alpine
+    container_name: api-sentinel-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Background Asynchronous Monitoring Worker (running in Docker)
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: api-sentinel-worker
+    restart: unless-stopped
+    command: ["node", "workers/monitoringWorker.js"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://ektasachdev@host.docker.internal:5432/api_sentinel?schema=public
+      - REDIS_URL=redis://redis:6379
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+      - NVIDIA_MODEL=meta/llama-3.1-70b-instruct
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  redis_data:
