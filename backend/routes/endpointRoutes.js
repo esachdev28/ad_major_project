@@ -262,4 +262,77 @@ router.post('/:id/check', async (req, res) => {
   }
 });
 
+// ==============================================================================
+// GET /api/endpoints/:id/history
+// Retrieves historical check logs, uptime %, error rate, and P50/P95/P99 latency
+// ==============================================================================
+router.get('/:id/history', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hours = parseInt(req.query.hours, 10) || 24;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const sinceDate = new Date(Date.now() - hours * 3600 * 1000);
+
+    const endpoint = await prisma.aPIEndpoint.findUnique({ where: { id } });
+    if (!endpoint) {
+      return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+    }
+
+    const checks = await prisma.healthCheck.findMany({
+      where: {
+        endpointId: id,
+        checkedAt: { gte: sinceDate },
+      },
+      orderBy: { checkedAt: 'desc' },
+      take: limit,
+    });
+
+    const total = checks.length;
+    const healthyCount = checks.filter((c) => c.isHealthy).length;
+    const uptime = total > 0 ? Number(((healthyCount / total) * 100).toFixed(2)) : 100;
+    const errorRate = total > 0 ? Number((((total - healthyCount) / total) * 100).toFixed(2)) : 0;
+
+    const latencies = checks
+      .map((c) => c.latency)
+      .filter((l) => typeof l === 'number')
+      .sort((a, b) => a - b);
+
+    const getPerc = (p) => {
+      if (latencies.length === 0) return 0;
+      const idx = Math.ceil((p / 100) * latencies.length) - 1;
+      return latencies[Math.max(0, Math.min(idx, latencies.length - 1))];
+    };
+
+    const statusDistribution = {};
+    for (const c of checks) {
+      const key = c.statusCode ? `${Math.floor(c.statusCode / 100)}xx` : 'Network/Timeout';
+      statusDistribution[key] = (statusDistribution[key] || 0) + 1;
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        endpointId: id,
+        endpointName: endpoint.name,
+        totalChecks: total,
+        uptime,
+        errorRate,
+        percentiles: {
+          p50: getPerc(50),
+          p95: getPerc(95),
+          p99: getPerc(99),
+        },
+        statusDistribution,
+        history: [...checks].reverse(),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching endpoint history:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve endpoint history',
+    });
+  }
+});
+
 module.exports = router;

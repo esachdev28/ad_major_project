@@ -1,87 +1,86 @@
 /**
  * dashboardRoutes.js
- * 
- * 1. Why this file exists:
- *    Serves dashboard statistics computed directly from PostgreSQL using Prisma ORM.
- *    Replaces the previous static demo metrics with dynamic database aggregates.
- * 
- * 2. What its responsibilities are:
- *    - Handle GET requests for `/api/dashboard/stats`.
- *    - Query PostgreSQL via Prisma to compute:
- *      * Total registered APIs (count of APIEndpoint records).
- *      * Healthy APIs (count of endpoints whose most recent HealthCheck is healthy).
- *      * Failed APIs (count of endpoints whose most recent HealthCheck is unhealthy).
- *      * Average latency (aggregate average latency across HealthCheck records).
- *    - Return a clear "dataSource": "database" indicator.
- *    - Return 0 counts and "0 ms" if the database tables are empty, without throwing errors.
- *    - Handle database connectivity failures safely without leaking credentials.
- * 
- * 3. Which functions/handlers it contains:
- *    - GET /stats handler: Asynchronously queries Prisma and responds with metrics JSON.
- * 
- * 4. How it communicates with other files:
- *    - Imports shared `prisma` client from `../lib/prisma`.
- *    - Exported via `module.exports` and mounted in `server.js` at `/api/dashboard`.
- *    - Consumed by `frontend/src/services/api.js` to render the React dashboard cards.
- * 
- * 5. Database Request Flow:
- *    React Dashboard -> Express Route (GET /api/dashboard/stats) -> Prisma Client
- *    -> PostgreSQL Database -> Prisma Response -> Express JSON Response -> React State -> UI Update.
+ *
+ * Serves live operational statistics, worker status, and fleet-wide
+ * latency trends from PostgreSQL and Redis.
  */
 
 const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const redis = require('../lib/redis');
+
+/**
+ * Helper to compute P50, P95, P99 latency percentiles from a sorted array of numbers.
+ */
+function calculatePercentiles(latencies) {
+  if (!latencies || latencies.length === 0) {
+    return { p50: 0, p95: 0, p99: 0 };
+  }
+  const sorted = [...latencies].sort((a, b) => a - b);
+  const getPerc = (p) => {
+    const idx = Math.ceil((p / 100) * sorted.length) - 1;
+    return sorted[Math.max(0, Math.min(idx, sorted.length - 1))];
+  };
+  return {
+    p50: getPerc(50),
+    p95: getPerc(95),
+    p99: getPerc(99),
+  };
+}
 
 // GET /api/dashboard/stats
-// Calculates live operational statistics from PostgreSQL using Prisma
 router.get('/stats', async (req, res) => {
   try {
-    // 1. Fetch endpoints along with their latest health check (ordered by checkedAt descending)
-    // This single query replaces the separate count() call — endpoints.length gives the total
-    const endpoints = await prisma.aPIEndpoint.findMany({
-      select: {
-        id: true,
-        healthChecks: {
-          orderBy: { checkedAt: 'desc' },
-          take: 1,
-          select: {
-            isHealthy: true,
-            latency: true
-          }
-        }
-      }
-    });
+    const [endpoints, openIncidentsCount, totalChecksCount, latencyAggregate] = await Promise.all([
+      prisma.aPIEndpoint.findMany({
+        select: {
+          id: true,
+          healthChecks: {
+            orderBy: { checkedAt: 'desc' },
+            take: 1,
+            select: {
+              isHealthy: true,
+              latency: true,
+            },
+          },
+        },
+      }),
+      prisma.incident.count({ where: { status: 'OPEN' } }),
+      prisma.healthCheck.count(),
+      prisma.healthCheck.aggregate({
+        _avg: { latency: true },
+      }),
+    ]);
 
     const totalApis = endpoints.length;
-
-    // 2. Count healthy and failed endpoints based on their latest health check
     let healthyApis = 0;
     let failedApis = 0;
 
     for (const ep of endpoints) {
       const latestCheck = ep.healthChecks[0];
       if (latestCheck) {
-        if (latestCheck.isHealthy) {
-          healthyApis++;
-        } else {
-          failedApis++;
-        }
+        if (latestCheck.isHealthy) healthyApis++;
+        else failedApis++;
       }
     }
-
-    // 3. Calculate average latency across all available HealthCheck records using Prisma aggregate
-    const latencyAggregate = await prisma.healthCheck.aggregate({
-      _avg: {
-        latency: true
-      }
-    });
 
     const avgLatencyNum = latencyAggregate._avg.latency
       ? Math.round(latencyAggregate._avg.latency)
       : 0;
 
-    // 4. Send clean JSON response
+    // Check Docker Worker status via Redis heartbeat
+    let workerHeartbeat = null;
+    let workerOnline = false;
+    try {
+      if (redis.status === 'wait') await redis.connect();
+      workerHeartbeat = await redis.get('worker:heartbeat');
+      if (workerHeartbeat) {
+        const diffMs = Date.now() - new Date(workerHeartbeat).getTime();
+        workerOnline = diffMs < 60000;
+      }
+    } catch (_) {}
+
     return res.status(200).json({
       success: true,
       dataSource: 'database',
@@ -89,15 +88,16 @@ router.get('/stats', async (req, res) => {
         totalApis,
         healthyApis,
         failedApis,
-        averageLatency: `${avgLatencyNum} ms`
+        activeIncidents: openIncidentsCount,
+        totalChecks: totalChecksCount,
+        averageLatency: `${avgLatencyNum} ms`,
+        workerOnline,
+        workerHeartbeat,
       },
-      message: 'Live database-backed statistics'
+      message: 'Live database-backed statistics',
     });
   } catch (error) {
-    // Log internal error on server without leaking sensitive DB credentials to client
-    console.error('Error fetching dashboard statistics from database:', error.message);
-
-    // Return safe fallback values so frontend doesn't crash if database is temporarily unavailable
+    console.error('Error fetching dashboard statistics:', error.message);
     return res.status(500).json({
       success: false,
       dataSource: 'database',
@@ -105,9 +105,67 @@ router.get('/stats', async (req, res) => {
         totalApis: 0,
         healthyApis: 0,
         failedApis: 0,
-        averageLatency: '0 ms'
+        activeIncidents: 0,
+        totalChecks: 0,
+        averageLatency: '0 ms',
+        workerOnline: false,
       },
-      message: 'Failed to retrieve database statistics. Please ensure PostgreSQL is connected.'
+      message: 'Failed to retrieve database statistics.',
+    });
+  }
+});
+
+// GET /api/dashboard/analytics
+// Returns fleet latency history, percentile calculations (P50, P95, P99), and recent logs
+router.get('/analytics', async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours, 10) || 24;
+    const sinceDate = new Date(Date.now() - hours * 3600 * 1000);
+
+    const recentChecks = await prisma.healthCheck.findMany({
+      where: {
+        checkedAt: { gte: sinceDate },
+      },
+      orderBy: { checkedAt: 'desc' },
+      take: 100,
+      include: {
+        endpoint: {
+          select: { name: true, method: true },
+        },
+      },
+    });
+
+    const latencies = recentChecks.map((c) => c.latency).filter((l) => typeof l === 'number');
+    const percentiles = calculatePercentiles(latencies);
+
+    const total = recentChecks.length;
+    const healthyCount = recentChecks.filter((c) => c.isHealthy).length;
+    const errorRate = total > 0 ? Number((((total - healthyCount) / total) * 100).toFixed(2)) : 0;
+
+    // Reverse to chronological order for charting
+    const series = [...recentChecks].reverse().map((c) => ({
+      id: c.id,
+      endpointName: c.endpoint?.name || 'Unknown',
+      latency: c.latency || 0,
+      statusCode: c.statusCode,
+      isHealthy: c.isHealthy,
+      checkedAt: c.checkedAt,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        percentiles,
+        errorRate,
+        totalAnalyzed: total,
+        series,
+      },
+    });
+  } catch (error) {
+    console.error('Error computing dashboard analytics:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to compute latency analytics.',
     });
   }
 });

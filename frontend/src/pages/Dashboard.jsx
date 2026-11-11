@@ -38,11 +38,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
-import { checkHealth, checkDbHealth, getDashboardStats, getEndpoints } from '../services/api';
+import { checkHealth, checkDbHealth, getDashboardStats, getDashboardAnalytics, getEndpoints } from '../services/api';
 
 export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
   // State: API statistics received from Express backend
   const [stats, setStats] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [endpoints, setEndpoints] = useState([]);
 
   // State: backend health and connectivity ('checking' | 'online' | 'offline')
@@ -72,11 +73,12 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
     setDbStatus('checking');
 
     try {
-      // Execute health check, db check, stats, and endpoints fetch concurrently
-      const [healthResult, dbResult, statsResult, endpointsResult] = await Promise.allSettled([
+      // Execute health check, db check, stats, analytics, and endpoints fetch concurrently
+      const [healthResult, dbResult, statsResult, analyticsResult, endpointsResult] = await Promise.allSettled([
         checkHealth(),
         checkDbHealth(),
         getDashboardStats(),
+        getDashboardAnalytics(24),
         getEndpoints(),
       ]);
 
@@ -112,7 +114,12 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
         }
       }
 
-      // 4. Process registered endpoints
+      // 4. Process analytics
+      if (analyticsResult.status === 'fulfilled' && analyticsResult.value.success) {
+        setAnalytics(analyticsResult.value.data);
+      }
+
+      // 5. Process registered endpoints
       if (endpointsResult.status === 'fulfilled' && endpointsResult.value.success) {
         setEndpoints(endpointsResult.value.data || []);
       }
@@ -133,6 +140,8 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
 
   // Total number of endpoints that have been checked at least once
   const totalChecked = (stats?.healthyApis || 0) + (stats?.failedApis || 0);
+  const series = analytics?.series || [];
+  const maxLatency = Math.max(...series.map((s) => s.latency || 100), 500);
 
   return (
     <div className="main-wrapper">
@@ -180,21 +189,33 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
           </div>
         )}
 
-        {/* Data Source Notice */}
-        <div className="demo-banner">
+        {/* Data Source & Worker Notice */}
+        <div className="demo-banner" style={{ justifyContent: 'space-between' }}>
           <div className="demo-banner-content">
             <span className="demo-tag" style={dataSource === 'database' ? { backgroundColor: '#10b981' } : {}}>
               {dataSource ? `${dataSource.toUpperCase()} MODE` : 'DATABASE MODE'}
             </span>
             <p>
               {dataSource === 'database' ? (
-                <>Metrics computed live from <strong>PostgreSQL</strong> via Prisma ORM (<code>GET /api/dashboard/stats</code>).</>
+                <>Live metrics from <strong>PostgreSQL</strong> ({stats?.totalChecks || 0} probes logged).</>
               ) : (
-                <>All metrics below are delivered by Express (<code>GET /api/dashboard/stats</code>) for Day 1 foundation.</>
+                <>All metrics below are delivered by Express (<code>GET /api/dashboard/stats</code>).</>
               )}
             </p>
           </div>
-          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Day 1 Commit 2</span>
+          <span
+            style={{
+              padding: '0.25rem 0.65rem',
+              borderRadius: '9999px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              backgroundColor: stats?.workerOnline ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+              color: stats?.workerOnline ? '#34d399' : '#f87171',
+              border: `1px solid ${stats?.workerOnline ? '#10b981' : '#ef4444'}`,
+            }}
+          >
+            ● Docker Worker: {stats?.workerOnline ? 'Active' : 'Offline'}
+          </span>
         </div>
 
         {/* 4 Core Quantitative Statistics Cards */}
@@ -225,8 +246,8 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
             icon="❌"
             colorVariant="red"
             subtitle={
-              stats?.failedApis > 0
-                ? 'Incidents flagged'
+              stats?.activeIncidents > 0
+                ? `${stats.activeIncidents} active incident(s)`
                 : totalChecked > 0
                 ? 'All clear'
                 : 'No checks yet'
@@ -238,10 +259,68 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
             value={stats?.averageLatency}
             icon="⚡"
             colorVariant="amber"
-            subtitle="Fleet response time"
+            subtitle={`P95: ${analytics?.percentiles?.p95 || 0} ms`}
             isLoading={isLoading}
           />
         </section>
+
+        {/* Fleet Latency Distribution & Percentiles Chart */}
+        <div className="panel-card" style={{ marginBottom: '1.5rem' }}>
+          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h2 className="panel-title" style={{ margin: 0 }}>
+              <span>📈</span> Latency Distribution (Last {series.length} Probes)
+            </h2>
+            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem' }}>
+              <span style={{ color: '#94a3b8' }}>
+                P50: <strong style={{ color: '#38bdf8' }}>{analytics?.percentiles?.p50 || 0} ms</strong>
+              </span>
+              <span style={{ color: '#94a3b8' }}>
+                P95: <strong style={{ color: '#f59e0b' }}>{analytics?.percentiles?.p95 || 0} ms</strong>
+              </span>
+              <span style={{ color: '#94a3b8' }}>
+                P99: <strong style={{ color: '#f43f5e' }}>{analytics?.percentiles?.p99 || 0} ms</strong>
+              </span>
+              <span style={{ color: '#94a3b8' }}>
+                Error Rate: <strong style={{ color: (analytics?.errorRate || 0) > 0 ? '#f87171' : '#34d399' }}>{analytics?.errorRate || 0}%</strong>
+              </span>
+            </div>
+          </div>
+
+          {series.length === 0 ? (
+            <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8' }}>
+              No telemetry samples collected yet. Background worker probes will appear here.
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: '4px',
+                height: '120px',
+                padding: '1rem 0.5rem 0.5rem',
+                borderBottom: '1px solid #334155',
+              }}
+            >
+              {series.slice(-40).map((point) => {
+                const heightPct = Math.max(8, Math.round((point.latency / maxLatency) * 100));
+                return (
+                  <div
+                    key={point.id}
+                    title={`${point.endpointName} | HTTP ${point.statusCode || 'ERR'} | ${point.latency}ms (${new Date(point.checkedAt).toLocaleTimeString()})`}
+                    style={{
+                      flex: 1,
+                      height: `${heightPct}%`,
+                      backgroundColor: point.isHealthy ? '#10b981' : '#ef4444',
+                      borderRadius: '3px 3px 0 0',
+                      minWidth: '6px',
+                      opacity: 0.85,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Detailed Sections: API Health Overview & Recent Activity */}
         <section className="dashboard-sections-grid">

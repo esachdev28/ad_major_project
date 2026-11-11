@@ -106,6 +106,14 @@ export async function getDashboardStats() {
   return await apiRequest('/api/dashboard/stats');
 }
 
+export async function getDashboardAnalytics(hours = 24) {
+  return await apiRequest(`/api/dashboard/analytics?hours=${hours}`);
+}
+
+export async function getEndpointHistory(id, hours = 24) {
+  return await apiRequest(`/api/endpoints/${encodeURIComponent(id)}/history?hours=${hours}`);
+}
+
 export async function getEndpoints(params = {}) {
   const query = new URLSearchParams(params).toString();
   return apiRequest(query ? `/api/endpoints?${query}` : '/api/endpoints');

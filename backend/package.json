@@ -8,7 +8,7 @@
     "dev": "node --watch server.js",
     "seed": "node prisma/seed.js",
     "worker": "node workers/monitoringWorker.js",
-    "test": "node tests/step2_endpoints.test.js"
+    "test": "node tests/step2_endpoints.test.js && node tests/step3_monitoring.test.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -17,6 +17,7 @@
     "@prisma/client": "^6.19.3",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "ioredis": "^6.0.0",
     "prisma": "^6.19.3"
   }
 }
