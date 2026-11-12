@@ -161,4 +161,24 @@ export async function resolveIncident(id) {
   return apiRequest(`/api/incidents/${encodeURIComponent(id)}/resolve`, { method: 'PATCH' });
 }
 
+// ==========================================
+// API Contract Management & Versioning
+// ==========================================
+
+export async function getContracts() {
+  return apiRequest('/api/contracts');
+}
+
+export async function getContractVersion(versionId) {
+  return apiRequest(`/api/contracts/${encodeURIComponent(versionId)}`);
+}
+
+export async function uploadContract(data) {
+  return apiRequest('/api/contracts/upload', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function deleteContractVersion(versionId) {
+  return apiRequest(`/api/contracts/${encodeURIComponent(versionId)}`, { method: 'DELETE' });
+}
+
 export { API_BASE_URL };

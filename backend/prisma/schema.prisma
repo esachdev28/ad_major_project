@@ -131,6 +131,9 @@ model APIVersion {
   id            String      @id @default(cuid())
   endpointId    String
   version       String      // e.g. "v1.0.0", "v1.1.0"
+  title         String?
+  format        String      @default("JSON") // JSON or YAML
+  specHash      String?     // SHA-256 hash of canonical parsed spec for deduplication
   specification String      @db.Text // Full OpenAPI JSON or YAML content
   createdAt     DateTime    @default(now())
 
@@ -138,5 +141,6 @@ model APIVersion {
   endpoint      APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
   @@index([endpointId])
+  @@index([specHash])
   @@map("api_versions")
 }
