@@ -47,6 +47,7 @@ const endpointRoutes = require('./routes/endpointRoutes');
 const incidentRoutes = require('./routes/incidentRoutes');
 const contractRoutes = require('./routes/contractRoutes');
 const dependencyRoutes = require('./routes/dependencyRoutes');
+const mcpRoutes = require('./routes/mcpRoutes');
 
 const app = express();
 
@@ -86,6 +87,7 @@ app.use('/api/endpoints', endpointRoutes);
 app.use('/api/incidents', incidentRoutes);
 app.use('/api/contracts', contractRoutes);
 app.use('/api/dependencies', dependencyRoutes);
+app.use('/api/mcp', mcpRoutes);
 
 // Fallback for unmatched /api requests (returns clean JSON 404)
 app.use('/api', (req, res) => {

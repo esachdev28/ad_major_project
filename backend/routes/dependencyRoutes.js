@@ -249,3 +249,4 @@ router.post('/impact', async (req, res) => {
 });
 
 module.exports = router;
+
