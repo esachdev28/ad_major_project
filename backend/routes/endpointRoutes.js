@@ -2,6 +2,8 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { validateUrlForMonitoring } = require('../utils/urlValidator');
 const { executeProbe } = require('../services/probeService');
+const { encrypt, decrypt } = require('../utils/encryption');
+const { probeLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
 const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
@@ -79,11 +81,11 @@ async function validateEndpointInput(body, isUpdate = false) {
     if (body.headers === null || body.headers === '') {
       data.headers = null;
     } else if (typeof body.headers === 'object') {
-      data.headers = JSON.stringify(body.headers);
+      data.headers = encrypt(JSON.stringify(body.headers));
     } else if (typeof body.headers === 'string') {
       try {
         JSON.parse(body.headers);
-        data.headers = body.headers;
+        data.headers = encrypt(body.headers);
       } catch (_) {
         return { error: 'Headers must be a valid JSON object.' };
       }
@@ -183,6 +185,9 @@ router.get('/:id', async (req, res) => {
       },
     });
     if (!endpoint) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+    if (endpoint.headers) {
+      endpoint.headers = decrypt(endpoint.headers);
+    }
     res.json({ success: true, data: endpoint });
   } catch (error) {
     console.error('Unable to retrieve API endpoint:', error.message);
@@ -205,9 +210,15 @@ router.post('/', async (req, res) => {
       console.warn('Initial probe warning:', probeErr.message);
     }
 
+    const responseData = {
+      ...endpoint,
+      headers: endpoint.headers ? decrypt(endpoint.headers) : null,
+      latestCheck,
+    };
+
     res.status(201).json({
       success: true,
-      data: { ...endpoint, latestCheck },
+      data: responseData,
       message: 'API endpoint created and initially probed.',
     });
   } catch (error) {
@@ -223,7 +234,11 @@ router.put('/:id', async (req, res) => {
     const existing = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id }, select: { id: true } });
     if (!existing) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
     const endpoint = await prisma.aPIEndpoint.update({ where: { id: req.params.id }, data: result.data });
-    res.json({ success: true, data: endpoint, message: 'API endpoint updated.' });
+    const responseData = {
+      ...endpoint,
+      headers: endpoint.headers ? decrypt(endpoint.headers) : null,
+    };
+    res.json({ success: true, data: responseData, message: 'API endpoint updated.' });
   } catch (error) {
     console.error('Unable to update API endpoint:', error.message);
     res.status(500).json({ success: false, message: 'Unable to update API endpoint.' });
@@ -243,7 +258,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-router.post('/:id/check', async (req, res) => {
+router.post('/:id/check', probeLimiter, async (req, res) => {
   try {
     const endpoint = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id } });
     if (!endpoint) return res.status(404).json({ success: false, message: 'API endpoint not found.' });

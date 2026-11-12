@@ -3,12 +3,16 @@
  *
  * Core HTTP probing engine for API Sentinel.
  * Executes live health checks against registered endpoints, records response latency,
- * verifies expected status codes, and persists results to the database.
+ * verifies expected status codes, re-validates redirects for SSRF protection,
+ * decrypts encrypted authentication headers, and persists results to PostgreSQL.
  */
 
 const prisma = require('../lib/prisma');
 const { validateUrlForMonitoring } = require('../utils/urlValidator');
 const { evaluateCheckForIncident } = require('./incidentService');
+const { decrypt } = require('../utils/encryption');
+
+const MAX_REDIRECTS = 5;
 
 /**
  * Probes a single endpoint and stores the result in PostgreSQL.
@@ -28,7 +32,7 @@ async function executeProbe(endpointOrId) {
     throw new Error('Endpoint not found');
   }
 
-  // SSRF validation check prior to network call
+  // Initial SSRF validation check prior to network call
   const urlCheck = await validateUrlForMonitoring(endpoint.url);
   if (!urlCheck.isValid) {
     const failedCheck = await prisma.healthCheck.create({
@@ -47,12 +51,14 @@ async function executeProbe(endpointOrId) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Decrypt custom headers if encrypted at rest (AES-256-GCM)
   let customHeaders = {};
   if (endpoint.headers) {
     try {
-      customHeaders = typeof endpoint.headers === 'string'
-        ? JSON.parse(endpoint.headers)
-        : endpoint.headers;
+      const decryptedHeaders = decrypt(endpoint.headers);
+      customHeaders = typeof decryptedHeaders === 'string'
+        ? JSON.parse(decryptedHeaders)
+        : (decryptedHeaders || {});
     } catch (_) {
       // Ignore header parse issues
     }
@@ -65,14 +71,48 @@ async function executeProbe(endpointOrId) {
   let latency = 0;
 
   try {
-    const response = await fetch(endpoint.url, {
-      method: endpoint.method || 'GET',
-      headers: {
-        'User-Agent': 'API-Sentinel-Monitor/1.0',
-        ...customHeaders,
-      },
-      signal: controller.signal,
-    });
+    let currentUrl = endpoint.url;
+    let redirectCount = 0;
+    let response = null;
+
+    // Redirect following loop with strict SSRF re-validation on every hop
+    while (redirectCount <= MAX_REDIRECTS) {
+      response = await fetch(currentUrl, {
+        method: redirectCount === 0 ? (endpoint.method || 'GET') : 'GET',
+        headers: {
+          'User-Agent': 'API-Sentinel-Monitor/1.0',
+          ...customHeaders,
+        },
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+
+      const isRedirect = [301, 302, 303, 307, 308].includes(response.status);
+      if (!isRedirect) {
+        break;
+      }
+
+      const locationHeader = response.headers.get('location');
+      if (!locationHeader) {
+        break; // No location header provided, terminate at current response
+      }
+
+      redirectCount++;
+      if (redirectCount > MAX_REDIRECTS) {
+        throw new Error(`Exceeded maximum redirect limit of ${MAX_REDIRECTS} hops`);
+      }
+
+      // Resolve relative or absolute redirect destination
+      const destinationUrl = new URL(locationHeader, currentUrl).href;
+
+      // SSRF re-validation for the redirect target
+      const redirectCheck = await validateUrlForMonitoring(destinationUrl);
+      if (!redirectCheck.isValid) {
+        throw new Error(`Blocked by SSRF Guard on redirect: ${redirectCheck.error}`);
+      }
+
+      currentUrl = destinationUrl;
+    }
 
     clearTimeout(timeoutId);
     latency = Math.max(1, Date.now() - startTime);

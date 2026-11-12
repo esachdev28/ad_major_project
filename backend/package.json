@@ -9,7 +9,7 @@
     "seed": "node prisma/seed.js",
     "worker": "node workers/monitoringWorker.js",
     "mcp": "node mcp/mcpServer.js",
-    "test": "node tests/step2_endpoints.test.js && node tests/step3_monitoring.test.js && node tests/step4_incidents.test.js && node tests/step5_contracts.test.js && node tests/step6_diff.test.js && node tests/step7_dependencies.test.js && node tests/step8_mcp.test.js && node tests/step9_diagnostics.test.js && node tests/step10_e2e_demo.test.js"
+    "test": "node tests/step2_endpoints.test.js && node tests/step3_monitoring.test.js && node tests/step4_incidents.test.js && node tests/step5_contracts.test.js && node tests/step6_diff.test.js && node tests/step7_dependencies.test.js && node tests/step8_mcp.test.js && node tests/step9_diagnostics.test.js && node tests/step10_e2e_demo.test.js && node tests/step13_security.test.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -19,6 +19,7 @@
     "@prisma/client": "^6.19.3",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.7.4",
     "ioredis": "^6.0.0",
     "js-yaml": "^5.5.0",
     "prisma": "^6.19.3",

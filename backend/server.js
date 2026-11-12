@@ -49,6 +49,7 @@ const contractRoutes = require('./routes/contractRoutes');
 const dependencyRoutes = require('./routes/dependencyRoutes');
 const mcpRoutes = require('./routes/mcpRoutes');
 const diagnosticsRoutes = require('./routes/diagnosticsRoutes');
+const { apiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -80,6 +81,9 @@ app.use(express.static(distPath));
 // ==========================================
 // API Route Mounts
 // ==========================================
+
+// Global API rate limiting (Phase 13 Security Hardening)
+app.use('/api', apiLimiter);
 
 // Mount dedicated API routers
 app.use('/api/health', healthRoutes);
@@ -156,15 +160,17 @@ process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 // ==========================================
 // Start Server
 // ==========================================
-app.listen(PORT, () => {
-  console.log(`===============================================`);
-  console.log(`🛡️  API Sentinel Unified Server with PostgreSQL & Prisma`);
-  console.log(`🚀 Unified Web & API Server: http://localhost:${PORT}`);
-  console.log(`🩺 Server Health check:     http://localhost:${PORT}/api/health`);
-  console.log(`🗄️  Database Health check:   http://localhost:${PORT}/api/health/db`);
-  console.log(`📊 Dashboard stats endpoint: http://localhost:${PORT}/api/dashboard/stats`);
-  console.log(`===============================================`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`===============================================`);
+    console.log(`🛡️  API Sentinel Unified Server with PostgreSQL & Prisma`);
+    console.log(`🚀 Unified Web & API Server: http://localhost:${PORT}`);
+    console.log(`🩺 Server Health check:     http://localhost:${PORT}/api/health`);
+    console.log(`🗄️  Database Health check:   http://localhost:${PORT}/api/health/db`);
+    console.log(`📊 Dashboard stats endpoint: http://localhost:${PORT}/api/dashboard/stats`);
+    console.log(`===============================================`);
+  });
+}
 
 // Export app for testing purposes
 module.exports = app;
