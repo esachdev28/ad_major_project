@@ -82,8 +82,8 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate }) {
 
       {/* Sidebar Footer */}
       <div className="sidebar-footer">
-        <span>Day 1 — Foundation</span>
-        <span>v0.1.0</span>
+        <span>Sentinel Platform</span>
+        <span>v1.0.0</span>
       </div>
     </aside>
   );

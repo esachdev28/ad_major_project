@@ -17,6 +17,7 @@ const emptyForm = {
   expectedStatus: 200,
   interval: 60,
   timeout: 5000,
+  headers: '',
 };
 const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 
@@ -31,6 +32,7 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
           expectedStatus: endpoint.expectedStatus || 200,
           interval: endpoint.interval || 60,
           timeout: endpoint.timeout || 5000,
+          headers: endpoint.headers ? (typeof endpoint.headers === 'string' ? endpoint.headers : JSON.stringify(endpoint.headers, null, 2)) : '',
         }
       : emptyForm
   );
@@ -131,6 +133,16 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
               />
             </label>
           </div>
+          <label>
+            Custom Headers <span className="optional-label">(optional JSON, encrypted at rest)</span>
+            <textarea
+              rows="2"
+              placeholder='{"Authorization": "Bearer token", "X-Api-Key": "secret"}'
+              value={form.headers}
+              onChange={(event) => setForm({ ...form, headers: event.target.value })}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}
+            />
+          </label>
           <label>
             Description <span className="optional-label">(optional)</span>
             <textarea
@@ -255,7 +267,7 @@ export default function Endpoints({ onEndpointsChanged }) {
   });
 
   return (
-    <div className="main-layout">
+    <div className="main-wrapper">
       <Header
         backendStatus={backendStatus}
         onRefresh={loadEndpoints}
