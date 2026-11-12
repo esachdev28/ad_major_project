@@ -139,4 +139,26 @@ export async function checkEndpointNow(id) {
   return apiRequest(`/api/endpoints/${encodeURIComponent(id)}/check`, { method: 'POST' });
 }
 
+// ==========================================
+// Incident Management APIs
+// ==========================================
+
+export async function getIncidents(params = {}) {
+  const query = new URLSearchParams(params).toString();
+  const endpoint = query ? `/api/incidents?${query}` : '/api/incidents';
+  return apiRequest(endpoint);
+}
+
+export async function getIncidentById(id) {
+  return apiRequest(`/api/incidents/${encodeURIComponent(id)}`);
+}
+
+export async function acknowledgeIncident(id) {
+  return apiRequest(`/api/incidents/${encodeURIComponent(id)}/acknowledge`, { method: 'PATCH' });
+}
+
+export async function resolveIncident(id) {
+  return apiRequest(`/api/incidents/${encodeURIComponent(id)}/resolve`, { method: 'PATCH' });
+}
+
 export { API_BASE_URL };

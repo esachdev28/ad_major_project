@@ -27,6 +27,7 @@ import React, { useCallback, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Endpoints from './pages/Endpoints';
+import Incidents from './pages/Incidents';
 
 export default function App() {
   const [activeItem, setActiveItem] = useState('Dashboard');
@@ -37,9 +38,13 @@ export default function App() {
       {/* Persistent Left Navigation */}
       <Sidebar activeItem={activeItem} onNavigate={setActiveItem} />
 
-      {activeItem === 'API Endpoints'
-        ? <Endpoints onEndpointsChanged={refreshDashboard} />
-        : <Dashboard refreshKey={dashboardRefreshKey} onNavigateToEndpoints={() => setActiveItem('API Endpoints')} />}
+      {activeItem === 'API Endpoints' ? (
+        <Endpoints onEndpointsChanged={refreshDashboard} />
+      ) : activeItem === 'Incidents' ? (
+        <Incidents />
+      ) : (
+        <Dashboard refreshKey={dashboardRefreshKey} onNavigateToEndpoints={() => setActiveItem('API Endpoints')} />
+      )}
     </div>
   );
 }

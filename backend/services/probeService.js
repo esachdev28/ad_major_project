@@ -8,6 +8,7 @@
 
 const prisma = require('../lib/prisma');
 const { validateUrlForMonitoring } = require('../utils/urlValidator');
+const { evaluateCheckForIncident } = require('./incidentService');
 
 /**
  * Probes a single endpoint and stores the result in PostgreSQL.
@@ -108,9 +109,18 @@ async function executeProbe(endpointOrId) {
     },
   });
 
+  // Evaluate check outcome for Incident Creation, Deduplication, or Auto-Recovery
+  let incidentEvaluation = null;
+  try {
+    incidentEvaluation = await evaluateCheckForIncident(endpoint, savedCheck);
+  } catch (evalErr) {
+    console.warn('[ProbeService] Incident evaluation warning:', evalErr.message);
+  }
+
   return {
     success: true,
     check: savedCheck,
+    incidentEvaluation,
   };
 }
 

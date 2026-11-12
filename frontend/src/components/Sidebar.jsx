@@ -37,7 +37,7 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate }) {
   const navItems = [
     { name: 'Dashboard', icon: '📊', isImplemented: true },
     { name: 'API Endpoints', icon: '🔗', isImplemented: true },
-    { name: 'Incidents', icon: '🚨', isImplemented: false },
+    { name: 'Incidents', icon: '🚨', isImplemented: true },
     { name: 'Contract Analysis', icon: '📄', isImplemented: false },
     { name: 'Dependencies', icon: '🕸️', isImplemented: false },
     { name: 'Settings', icon: '⚙️', isImplemented: false },

@@ -44,6 +44,7 @@ const prisma = require('./lib/prisma');
 const healthRoutes = require('./routes/healthRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const endpointRoutes = require('./routes/endpointRoutes');
+const incidentRoutes = require('./routes/incidentRoutes');
 
 const app = express();
 
@@ -80,6 +81,7 @@ app.use(express.static(distPath));
 app.use('/api/health', healthRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/endpoints', endpointRoutes);
+app.use('/api/incidents', incidentRoutes);
 
 // Fallback for unmatched /api requests (returns clean JSON 404)
 app.use('/api', (req, res) => {
