@@ -9,7 +9,7 @@
     "seed": "node prisma/seed.js",
     "worker": "node workers/monitoringWorker.js",
     "mcp": "node mcp/mcpServer.js",
-    "test": "node tests/step2_endpoints.test.js && node tests/step3_monitoring.test.js && node tests/step4_incidents.test.js && node tests/step5_contracts.test.js && node tests/step6_diff.test.js && node tests/step7_dependencies.test.js && node tests/step8_mcp.test.js && node tests/step9_diagnostics.test.js"
+    "test": "node tests/step2_endpoints.test.js && node tests/step3_monitoring.test.js && node tests/step4_incidents.test.js && node tests/step5_contracts.test.js && node tests/step6_diff.test.js && node tests/step7_dependencies.test.js && node tests/step8_mcp.test.js && node tests/step9_diagnostics.test.js && node tests/step10_e2e_demo.test.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

@@ -1,340 +1,223 @@
-# 🛡️ API Sentinel — Day 1, Commit 2
+# 🛡️ API Sentinel — API Reliability & Compatibility Intelligence Platform
 
-**API Sentinel** is an API observability, health monitoring, and breaking-change detection platform designed to protect modern microservice ecosystems.
+**Tagline:** *Observe. Detect. Analyze. Diagnose.*
 
-This repository builds on **Day 1, Commit 2** with **Day 2, Commit 1**: API endpoint CRUD backed by PostgreSQL and Prisma ORM 6.
+**API Sentinel** is a full-stack API observability, automated health monitoring, OpenAPI breaking-change detection, dependency blast-radius analysis, Model Context Protocol (MCP), and AI-assisted incident investigation platform.
 
 ---
 
 ## 📋 Table of Contents
 
-1. [Project Overview](#project-overview)
-2. [Current Implementation Scope (Commit 2)](#current-implementation-scope-commit-2)
-3. [Technologies Used](#technologies-used)
-4. [Project Structure](#project-structure)
-5. [Prerequisites](#prerequisites)
-6. [Database Setup & Configuration](#database-setup--configuration)
-7. [Database Schema & Models](#database-schema--models)
-8. [Prisma Commands Reference](#prisma-commands-reference)
-9. [Starting the Application](#starting-the-application)
-10. [Available Backend Routes](#available-backend-routes)
-11. [End-to-End Database Request Flow](#end-to-end-database-request-flow)
-12. [Troubleshooting & Verification](#troubleshooting--verification)
+1. [Architecture & Technology Stack](#1-architecture--technology-stack)
+2. [Implemented Capabilities](#2-implemented-capabilities)
+3. [Project Structure](#3-project-structure)
+4. [Prerequisites & Local Setup](#4-prerequisites--local-setup)
+5. [Docker Background Worker & Redis](#5-docker-background-worker--redis)
+6. [Database Schema (Prisma ORM 6)](#6-database-schema-prisma-orm-6)
+7. [Backend REST API Reference](#7-backend-rest-api-reference)
+8. [Model Context Protocol (MCP) Server](#8-model-context-protocol-mcp-server)
+9. [AI-Assisted Diagnostics (NVIDIA NIM)](#9-ai-assisted-diagnostics-nvidia-nim)
+10. [Security Protections](#10-security-protections)
+11. [Automated Test Suite](#11-automated-test-suite)
+12. [Known Limitations](#12-known-limitations)
 
 ---
 
-## 1. Project Overview
+## 1. Architecture & Technology Stack
 
-Modern web applications depend on dozens of internal and third-party APIs. When an upstream API changes schemas, fails, or degrades in performance, downstream applications can experience cascading outages.
-
-**API Sentinel** is designed to address this problem by:
-- Monitoring registered API endpoints.
-- Detecting API failures and recording incidents.
-- Comparing API specification versions (OpenAPI/Swagger) to detect breaking changes before deployment.
-- Identifying integrations and services potentially affected by schema diffs.
-- Exposing diagnostic and remediation tools via MCP (Model Context Protocol).
-
-> **Current Scope (Day 2, Commit 1):** API endpoints can be registered, listed, edited, and deleted using the existing APIEndpoint model. Dashboard statistics and database health checks remain database-backed. Automated polling, OAuth, and OpenAPI diff engines are not implemented yet.
+- **Frontend:** React 18, Vite 6, JavaScript (ES6+), Custom SaaS Dark-Navy CSS (served statically by Express on port `5001` with zero-CORS unified origin).
+- **Backend:** Node.js, Express.js, Prisma ORM 6 (`prisma`, `@prisma/client`), `js-yaml`, `ioredis`, `zod`.
+- **Database:** Local PostgreSQL 17 (`api_sentinel`).
+- **Background Worker & Queue Broker:** Containerized Docker Compose services (`redis:7-alpine` + Node.js `api-sentinel-worker`).
+- **MCP Integration:** Official `@modelcontextprotocol/sdk` over `stdio` transport + HTTP `/api/mcp` bridge.
+- **AI Diagnostics:** NVIDIA NIM OpenAI-compatible API (`nvidia/nemotron-3.5-lightning-30b-a3b`) with deterministic rule-based fallback.
 
 ---
 
-## 2. Current Implementation Scope (Commit 2)
+## 2. Implemented Capabilities
 
-- **PostgreSQL Database:**
-  - Relational database schema with 5 dedicated models: `User`, `APIEndpoint`, `HealthCheck`, `Incident`, and `APIVersion`.
-  - Referential integrity: Foreign keys, cascade deletes, and query indexes.
-- **Prisma ORM 6 Integration:**
-  - `prisma@6` and `@prisma/client@6` installed and configured.
-  - Reusable singleton Prisma Client instance (`backend/lib/prisma.js`).
-  - Graceful process termination with `prisma.$disconnect()` on `SIGINT` / `SIGTERM`.
-  - Initial migration executed (`prisma/migrations/20261111074314_init`).
-- **Express Backend Updates:**
-  - **New Endpoint:** `GET /api/health/db` checks live database connectivity with `SELECT 1`.
-  - **Dynamic Statistics:** `GET /api/dashboard/stats` now calculates metrics directly from PostgreSQL via Prisma aggregates and counts, returning `"dataSource": "database"`.
-  - Safe error handling: If tables are empty or database is down, the API returns safe fallback values without crashing.
-- **React Frontend:**
-  - Updated API service layer (`frontend/src/services/api.js`) with `checkDbHealth()`.
-  - Dynamic UI badge displaying `DATABASE MODE` when live database statistics are returned.
-- **API Endpoint Management (Day 2, Commit 1):**
-  - Create, list, view, update, and delete API endpoint records through Express routes backed by Prisma.
-  - Validate endpoint names, HTTP/HTTPS URLs, supported methods, and allowed request fields.
-  - Cascade deletion removes related health checks, incidents, and API versions as defined by the existing Prisma schema.
-  - The UI displays registered endpoints as `NOT MONITORED` until monitoring is implemented.
+1. **Endpoint Registry & SSRF Guard**: Full CRUD for monitored API endpoints (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`), custom intervals, timeouts, expected HTTP status codes, and on-demand manual probing (`POST /api/endpoints/:id/check`).
+2. **Dockerized Background Monitoring Engine**: Periodically evaluates active endpoints using distributed Redis locks (`SET ... NX EX`) and bounded concurrency (`CONCURRENCY_LIMIT = 5`), recording latencies and publishing heartbeats to Redis.
+3. **Latency Percentiles & Analytics**: Computes fleet and per-endpoint `P50`, `P95`, `P99` latencies, uptime percentages, error rates, and HTTP status distributions.
+4. **Incident Detection & Auto-Recovery**: Opens `CRITICAL`/`HIGH` incidents after configurable consecutive failures (`failureThreshold = 3`), deduplicates repeat failures (`occurrenceCount`), supports `Acknowledge` / `Resolve` workflows, and auto-resolves on recovery.
+5. **OpenAPI 3.0/3.1 Contract Management**: Parses and validates JSON and YAML specs safely (`yaml.JSON_SCHEMA`), resolves local `$ref` schemas, extracts operations, and prevents duplicate uploads via SHA-256 `specHash`.
+6. **Deterministic Breaking-Change Analyzer**: Compares baseline vs target OpenAPI specs to detect removed paths/methods, removed response properties, incompatible data types, newly required parameters/request properties, enum removals, and authentication changes (`BREAKING`, `POTENTIALLY_BREAKING`, `NON_BREAKING`).
+7. **Service Dependency Graph & Blast Radius Engine**: Registers services and directed `Provider -> Consumer` links, computes direct (`depth = 1`) and transitive (`depth >= 2`) impact via cycle-safe BFS, and calculates an explainable `0–100` deterministic Risk Score.
+8. **Official MCP Server**: Exposes 7 strictly read-only diagnostic tools over `stdio` and `/api/mcp`.
+9. **Evidence-Grounded AI Diagnostics**: Gathers sanitized platform telemetry, incidents, diffs, and blast radius, redacts credentials, and separates **Verified Facts** from **Diagnostic Hypotheses**.
 
 ---
 
-## 3. Technologies Used
+## 3. Project Structure
 
-### Frontend
-- **React 18** (Component-based UI library)
-- **JavaScript (ES6+)**
-- **Vite** (Build tool & development server)
-- **HTML5 & CSS3** (Pure CSS, custom dark-navy theme)
-
-### Backend
-- **Node.js** (JavaScript runtime)
-- **Express.js** (Web application framework)
-- **Prisma ORM 6** (`prisma@6`, `@prisma/client@6`)
-- **PostgreSQL** (Relational Database Management System)
-- **dotenv** (Environment variable management)
-
----
-
-## 4. Project Structure
-
-```
+```text
 ad_major_project/
-│
-├── frontend/                     # React Single Page Application (Vite)
+├── docker-compose.yml            # Redis 7 Alpine + containerized monitoring worker
+├── frontend/                     # React 18 + Vite SPA
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── Sidebar.jsx       # Brand navigation & feature placeholders
-│   │   │   ├── Header.jsx        # Header with connection status pill & refresh
-│   │   │   └── StatCard.jsx      # Metric cards with loading skeletons
-│   │   │
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx     # Main dashboard view orchestrating data & layout
-│   │   │   └── Endpoints.jsx     # Database-backed API endpoint management
-│   │   │
-│   │   ├── services/
-│   │   │   └── api.js            # Centralized API service (health, stats, endpoint CRUD)
-│   │   │
-│   │   ├── App.jsx               # Root layout shell (Sidebar + Dashboard)
-│   │   ├── main.jsx              # React DOM entry point
-│   │   └── index.css             # Global dark-navy SaaS stylesheet
-│   │
-│   ├── dist/                     # Production build served by Express
-│   ├── index.html                # HTML entry template
-│   ├── vite.config.js            # Vite configuration with /api proxy
-│   └── package.json              # Frontend scripts and dependencies
-│
-├── backend/                      # Node.js + Express REST API
-│   ├── lib/
-│   │   └── prisma.js             # Reusable PrismaClient singleton instance
-│   │
-│   ├── prisma/
-│   │   ├── schema.prisma         # Prisma schema definition (5 models)
-│   │   └── migrations/           # Version-controlled SQL migration history
-│   │
-│   ├── routes/
-│   │   ├── healthRoutes.js       # GET /api/health & GET /api/health/db
-│   │   ├── dashboardRoutes.js    # GET /api/dashboard/stats (Prisma database queries)
-│   │   └── endpointRoutes.js     # API endpoint CRUD routes
-│   │
-│   ├── server.js                 # Server entry point, middleware & shutdown hooks
-│   ├── package.json              # Backend scripts and dependencies
-│   ├── .env.example              # Sample environment configuration template
-│   └── .env                      # Local server configuration (gitignored)
-│
-├── .gitignore                    # Excludes node_modules, credentials, dist
-└── README.md                     # Comprehensive project documentation
+│   │   ├── components/           # Sidebar, Header, StatCard
+│   │   ├── pages/                # Dashboard, Endpoints, Incidents, Contracts, Dependencies, Diagnostics
+│   │   └── services/api.js       # Unified REST client
+│   └── dist/                     # Compiled static assets served by Express
+└── backend/                      # Node.js + Express + Prisma API
+    ├── Dockerfile                # Worker/backend container build
+    ├── server.js                 # Express entrypoint & static SPA server
+    ├── lib/
+    │   ├── prisma.js             # PrismaClient singleton
+    │   └── redis.js              # ioredis broker client
+    ├── prisma/
+    │   ├── schema.prisma         # 8 relational models
+    │   ├── migrations/           # SQL migration history
+    │   └── seed.js               # Sample endpoints, checks, incidents, contracts, services
+    ├── utils/
+    │   └── urlValidator.js       # SSRF & DNS rebinding protection
+    ├── services/
+    │   ├── probeService.js       # HTTP probe runner + incident evaluation hook
+    │   ├── incidentService.js    # Threshold, deduplication & auto-recovery engine
+    │   ├── contractParserService.js
+    │   ├── contractDiffService.js
+    │   ├── dependencyService.js  # Cycle-safe BFS + deterministic risk scoring
+    │   └── aiDiagnosticsService.js
+    ├── mcp/
+    │   ├── mcpTools.js           # 7 read-only Zod-validated MCP tools
+    │   └── mcpServer.js          # Official stdio MCP server
+    ├── workers/
+    │   └── monitoringWorker.js   # Asynchronous background probe scheduler
+    ├── routes/                   # health, dashboard, endpoints, incidents, contracts, dependencies, mcp, diagnostics
+    └── tests/                    # Automated verification suites (step2 through step10)
 ```
 
 ---
 
-## 5. Prerequisites
+## 4. Prerequisites & Local Setup
 
-- **Node.js**: v18.0.0 or later (v20+ or v24+ recommended)
-- **npm**: v9.0.0 or later
-- **PostgreSQL**: v14, v15, or v16 running locally on port `5432`
+- **Node.js** v18+ (tested on v25.2.1)
+- **PostgreSQL** v14+ running locally on port `5432`
+- **Docker** (for Redis & background monitoring worker)
 
-Verify your local tools:
-```bash
-node -v
-npm -v
-psql --version
-pg_isready
-```
+### Setup Steps
+
+1. **Create database & configure `backend/.env`** (copy from `backend/.env.example`):
+   ```bash
+   psql -U $USER -d postgres -c "CREATE DATABASE api_sentinel;"
+   cp backend/.env.example backend/.env
+   ```
+   Set `DATABASE_URL`, `REDIS_URL`, and optionally `NVIDIA_API_KEY` inside `backend/.env`.
+
+2. **Install dependencies, run migrations, and seed sample data:**
+   ```bash
+   cd backend
+   npm install
+   npx prisma migrate deploy
+   npm run seed
+   ```
+
+3. **Build Frontend & Start Express Server:**
+   ```bash
+   cd ../frontend
+   npm install
+   npm run build
+
+   cd ../backend
+   npm start
+   ```
+   Open **`http://localhost:5001`** in your browser.
 
 ---
 
-## 6. Database Setup & Configuration
+## 5. Docker Background Worker & Redis
 
-### 1. Create the Database
-Ensure PostgreSQL is running, then create the `api_sentinel` database:
+Start Redis and the asynchronous monitoring worker in Docker:
 ```bash
-psql -U postgres -c "CREATE DATABASE api_sentinel;"
+docker compose up -d --build
+docker logs -f api-sentinel-worker
 ```
-*(On macOS with Homebrew, you can use your local username instead of `postgres`).*
+- `api-sentinel-redis`: Runs `redis:7-alpine` on port `6379` with health checks.
+- `api-sentinel-worker`: Runs `workers/monitoringWorker.js`, connecting to Redis (`redis://redis:6379`) and host PostgreSQL (`host.docker.internal:5432`).
 
-### 2. Configure Environment Variables
-Inside `backend/.env`, set your connection URL:
+---
+
+## 6. Database Schema (Prisma ORM 6)
+
+Defined across 8 models in `backend/prisma/schema.prisma`:
+- `User`: Developer/team owner record.
+- `APIEndpoint`: Monitored HTTP target with `interval`, `timeout`, `expectedStatus`, `failureThreshold`, `isActive`, and `headers`.
+- `HealthCheck`: Time-series probe outcomes (`statusCode`, `latency`, `isHealthy`, `errorMessage`, `checkedAt`).
+- `Incident`: Tracked outages (`OPEN`, `ACKNOWLEDGED`, `RESOLVED`), `severity`, `occurrenceCount`, `lastFailureAt`, `resolvedAt`.
+- `APIVersion`: Validated OpenAPI JSON/YAML specs with SHA-256 `specHash` deduplication.
+- `Service`: Registered service node (`criticality`, `ownerTeam`, optional linked `endpointId`).
+- `ServiceDependency`: Directed `Provider -> Consumer` integration edge.
+- `DiagnosticReport`: Persisted AI & evidence-backed investigation snapshots.
+
+---
+
+## 7. Backend REST API Reference
+
+| Group | Endpoints |
+| :--- | :--- |
+| **Health** | `GET /api/health`, `GET /api/health/db` |
+| **Dashboard** | `GET /api/dashboard/stats`, `GET /api/dashboard/analytics?hours=24` |
+| **Endpoints** | `GET /api/endpoints`, `GET /api/endpoints/:id`, `POST /api/endpoints`, `PUT /api/endpoints/:id`, `DELETE /api/endpoints/:id`, `POST /api/endpoints/:id/check`, `GET /api/endpoints/:id/history` |
+| **Incidents** | `GET /api/incidents`, `GET /api/incidents/:id`, `PATCH /api/incidents/:id/acknowledge`, `PATCH /api/incidents/:id/resolve` |
+| **Contracts** | `GET /api/contracts`, `GET /api/contracts/endpoint/:endpointId`, `GET /api/contracts/:versionId`, `POST /api/contracts/upload`, `POST /api/contracts/compare`, `DELETE /api/contracts/:versionId` |
+| **Dependencies** | `GET /api/dependencies/graph`, `GET /api/dependencies/services`, `POST /api/dependencies/services`, `DELETE /api/dependencies/services/:id`, `POST /api/dependencies/integrations`, `DELETE /api/dependencies/integrations/:id`, `POST /api/dependencies/impact` |
+| **MCP Bridge** | `GET /api/mcp/tools`, `POST /api/mcp/invoke` |
+| **AI Diagnostics** | `GET /api/diagnostics/status`, `GET /api/diagnostics/history`, `POST /api/diagnostics/investigate` |
+
+---
+
+## 8. Model Context Protocol (MCP) Server
+
+Run the standalone `stdio` MCP server:
+```bash
+cd backend
+npm run mcp
+```
+
+Exposed read-only tools:
+- `get_endpoint_health`
+- `get_recent_incidents`
+- `get_incident_details`
+- `compare_api_contracts`
+- `get_affected_consumers`
+- `analyze_api_risk`
+- `get_latency_history`
+
+---
+
+## 9. AI-Assisted Diagnostics (NVIDIA NIM)
+
+Configured via `backend/.env`:
 ```env
-PORT=5001
-DATABASE_URL="postgresql://USERNAME:PASSWORD@localhost:5432/api_sentinel?schema=public"
+NVIDIA_API_KEY="your-key"
+NVIDIA_BASE_URL="https://integrate.api.nvidia.com/v1"
+NVIDIA_MODEL="nvidia/nemotron-3.5-lightning-30b-a3b"
 ```
-*(If your local PostgreSQL user has no password, use `postgresql://USERNAME@localhost:5432/api_sentinel?schema=public`).*
+If `NVIDIA_API_KEY` is omitted or the external endpoint is unavailable, the diagnostic engine automatically switches to `deterministic-fallback` (`rule-engine-v1`) using live PostgreSQL evidence.
 
 ---
 
-## 7. Database Schema & Models
+## 10. Security Protections
 
-Our schema is defined in [backend/prisma/schema.prisma](file:///Users/vedantsmac/ad_major_project/backend/prisma/schema.prisma) across 5 core models:
-
-### 1. `User`
-- **Purpose:** Represents developers or teams who own and monitor endpoints (foundation for future authentication).
-- **Fields:** `id` (cuid), `name`, `email` (unique), `createdAt`, `updatedAt`.
-- **Relationship:** One User has many `APIEndpoint` records (`1-to-N`).
-
-### 2. `APIEndpoint`
-- **Purpose:** Represents an external or internal HTTP API registered for observability.
-- **Fields:** `id` (cuid), `name`, `url`, `method` (default "GET"), `description` (optional), `userId` (optional), `createdAt`, `updatedAt`.
-- **Relationships:**
-  - Belongs to optional `User` (`onDelete: SetNull`).
-  - Has many `HealthCheck` records (`onDelete: Cascade`).
-  - Has many `Incident` records (`onDelete: Cascade`).
-  - Has many `APIVersion` records (`onDelete: Cascade`).
-
-### 3. `HealthCheck`
-- **Purpose:** Records individual probe results, latency, and status codes.
-- **Fields:** `id` (cuid), `endpointId`, `statusCode`, `latency` (ms), `isHealthy` (boolean), `errorMessage`, `checkedAt`.
-- **Relationship:** Belongs to `APIEndpoint`.
-
-### 4. `Incident`
-- **Purpose:** Tracks outages, timeouts, and unexpected status codes.
-- **Fields:** `id` (cuid), `endpointId`, `title`, `description`, `status` (default "OPEN"), `createdAt`, `resolvedAt`.
-- **Relationship:** Belongs to `APIEndpoint`.
-
-### 5. `APIVersion`
-- **Purpose:** Stores OpenAPI/Swagger specification contracts for future diffing.
-- **Fields:** `id` (cuid), `endpointId`, `version`, `specification` (text), `createdAt`.
-- **Relationship:** Belongs to `APIEndpoint`.
+- **SSRF & DNS Rebinding Guard (`utils/urlValidator.js`)**: Blocks non-HTTP(S) schemes, `localhost`, `127.0.0.1`, `::1`, RFC 1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local / cloud metadata IPs (`169.254.169.254`, `metadata.google.internal`), and resolves hostnames via DNS before storing or probing.
+- **Credential Redaction**: Endpoint custom `headers` are stripped from MCP outputs and AI evidence snapshots; `Bearer` tokens, passwords, and `nvapi-` keys are masked in diagnostic reports and never exposed on `/api/diagnostics/status`.
+- **Safe YAML Parsing**: Uses `js-yaml` with `yaml.JSON_SCHEMA` and a 2 MB size cap.
+- **Read-Only MCP Boundary**: MCP tools enforce Zod argument validation and perform strictly read-only Prisma queries.
 
 ---
 
-## 8. Prisma Commands Reference
+## 11. Automated Test Suite
 
-All Prisma commands are run inside the `backend/` directory:
-
+Run all 9 backend verification suites (covering SSRF, worker probing, incident lifecycle, OpenAPI validation, breaking-change diffing, cycle-safe dependency traversal, real MCP `stdio` client-server calls, NVIDIA AI diagnostics, and the full 8-step E2E demo scenario):
 ```bash
 cd backend
-
-# 1. Validate schema syntax
-npx prisma validate
-
-# 2. Generate Prisma Client JavaScript code
-npx prisma generate
-
-# 3. Create and apply new migrations in development
-npx prisma migrate dev --name init
-
-# 4. View and edit database records visually via Prisma Studio
-npx prisma studio
+npm test
 ```
 
 ---
 
-## 9. Starting the Application
+## 12. Known Limitations
 
-With our unified **`express.static()`** architecture, you can run the entire full-stack app with a single command:
-
-```bash
-cd backend
-npm start
-```
-
-* Express starts on **`http://localhost:5001`**.
-* Open your browser and navigate to: **[http://localhost:5001](http://localhost:5001)**.
-* The React dashboard will load instantly, reading live metrics directly from PostgreSQL!
-
----
-
-## 10. Available Backend Routes
-
-| Method | Endpoint | Description | Sample Response |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/health` | Server health check | `{"success":true,"message":"API Sentinel backend is running"}` |
-| `GET` | `/api/health/db` | Database health check (`SELECT 1`) | `{"success":true,"message":"Database connection successful"}` |
-| `GET` | `/api/dashboard/stats` | Dynamic database metrics | `{"success":true,"dataSource":"database","data":{"totalApis":0,"healthyApis":0,"failedApis":0,"averageLatency":"0 ms"}}` |
-| `GET` | `/api/endpoints` | List endpoints (newest first) | `{"success":true,"data":[]}` |
-| `GET` | `/api/endpoints/:id` | Retrieve one endpoint | `{"success":true,"data":{...}}` |
-| `POST` | `/api/endpoints` | Register an endpoint | `{"success":true,"data":{...}}` |
-| `PUT` | `/api/endpoints/:id` | Update supplied endpoint fields | `{"success":true,"data":{...}}` |
-| `DELETE` | `/api/endpoints/:id` | Delete endpoint and cascade-related records | `{"success":true,"message":"API endpoint and its associated records were deleted."}` |
-
-Endpoint registration accepts `name`, `url`, `method`, and optional `description`. Methods are limited to `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`; URLs must use HTTP or HTTPS. No monitoring request is sent to a submitted URL.
-
-### Testing Endpoints via Command Line
-```bash
-# Test server health
-curl http://localhost:5001/api/health
-
-# Test database connection
-curl http://localhost:5001/api/health/db
-
-# Test dashboard statistics
-curl http://localhost:5001/api/dashboard/stats
-```
-
----
-
-## 11. End-to-End Database Request Flow
-
-```
-┌──────────────────┐
-│  React Browser   │
-│ (Dashboard.jsx)  │
-└────────┬─────────┘
-         │
-         │ 1. useEffect triggers getDashboardStats()
-         ▼
-┌──────────────────┐
-│  Frontend Client │
-│     (api.js)     │
-└────────┬─────────┘
-         │
-         │ 2. HTTP GET /api/dashboard/stats
-         ▼
-┌──────────────────┐
-│  Express Server  │
-│(dashboardRoutes) │
-└────────┬─────────┘
-         │
-         │ 3. Invokes queries via reusable client
-         ▼
-┌──────────────────┐
-│  Prisma Client   │
-│  (lib/prisma.js) │
-└────────┬─────────┘
-         │
-         │ 4. Executes SQL queries:
-         │    - count() on APIEndpoint
-         │    - findMany() with nested latest HealthCheck
-         │    - aggregate() for average latency
-         ▼
-┌──────────────────┐
-│    PostgreSQL    │
-│  (api_sentinel)  │
-└────────┬─────────┘
-         │
-         │ 5. Returns SQL result rows
-         ▼
-┌──────────────────┐
-│  Prisma Client   │
-└────────┬─────────┘
-         │
-         │ 6. Deserializes rows into JavaScript objects
-         ▼
-┌──────────────────┐
-│  Express Server  │
-└────────┬─────────┘
-         │
-         │ 7. Responds with JSON: { success: true, dataSource: "database", data: {...} }
-         ▼
-┌──────────────────┐
-│  React Browser   │
-└──────────────────┘
-         │ 8. setStats(data) -> Virtual DOM reconciliation -> UI updates!
-```
-
----
-
-## 12. Troubleshooting & Verification
-
-- **Database Connection Failed (`/api/health/db` returns 503):**
-  - Check that PostgreSQL is running: `pg_isready`
-  - Verify your `DATABASE_URL` credentials in `backend/.env`.
-- **Prisma Client Out of Sync:**
-  - If you modify `schema.prisma`, run `npx prisma generate` to re-generate the client.
-- **Database Tables Empty:**
-  - If no endpoints are registered yet, the API returns zero values (`totalApis: 0, averageLatency: "0 ms"`). The dashboard displays these cleanly without crashing.
+- **Authentication & Multi-Tenant Organization Isolation**: The `User` model is present in Prisma, but login/JWT authentication and multi-tenant organization scoping (`Phase 2` in `TASK.md`) are not implemented in this sprint build.
+- **Frontend Automated Tests**: Verification relies on Vite production builds (`npm run build`) and comprehensive backend API/integration tests (`npm test`); standalone browser/React component unit tests (e.g. Vitest/Playwright) were not added.
+- **Local Network Monitoring**: Because SSRF protection blocks `127.0.0.1` and private subnets, internal intranet endpoints cannot be probed unless explicitly deployed outside blocked ranges.
