@@ -67,10 +67,11 @@ model APIEndpoint {
   user             User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   // Relationships: One endpoint has many health checks, incidents, version specs, and linked services
-  healthChecks     HealthCheck[]
-  incidents        Incident[]
-  versions         APIVersion[]
-  services         Service[]
+  healthChecks      HealthCheck[]
+  incidents         Incident[]
+  versions          APIVersion[]
+  services          Service[]
+  diagnosticReports DiagnosticReport[]
 
   @@index([userId])
   @@index([url])
@@ -190,4 +191,29 @@ model ServiceDependency {
   @@index([providerId])
   @@index([consumerId])
   @@map("service_dependencies")
+}
+
+// ------------------------------------------------------------------------------
+// Model 8: DiagnosticReport
+// Stores AI-assisted and evidence-backed incident investigation reports.
+// ------------------------------------------------------------------------------
+model DiagnosticReport {
+  id              String       @id @default(cuid())
+  endpointId      String?
+  incidentId      String?
+  query           String       @db.Text
+  provider        String       // e.g. "nvidia-nim" or "deterministic-fallback"
+  model           String       // e.g. "meta/llama-3.1-70b-instruct"
+  summary         String       @db.Text
+  verifiedFacts   String       @db.Text // JSON array of verified facts from telemetry
+  hypotheses      String       @db.Text // JSON array of diagnostic hypotheses
+  recommendations String       @db.Text // JSON array of safe remediation steps
+  evidenceContext String       @db.Text // Sanitized JSON snapshot of collected platform evidence
+  createdAt       DateTime     @default(now())
+
+  endpoint        APIEndpoint? @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+
+  @@index([endpointId])
+  @@index([createdAt])
+  @@map("diagnostic_reports")
 }

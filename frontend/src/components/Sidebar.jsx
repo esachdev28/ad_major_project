@@ -40,6 +40,7 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate }) {
     { name: 'Incidents', icon: '🚨', isImplemented: true },
     { name: 'Contract Analysis', icon: '📄', isImplemented: true },
     { name: 'Dependencies', icon: '🕸️', isImplemented: true },
+    { name: 'AI Diagnostics', icon: '🧠', isImplemented: true },
     { name: 'Settings', icon: '⚙️', isImplemented: false },
   ];
 

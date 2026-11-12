@@ -402,3 +402,4 @@ const MCP_TOOL_DEFINITIONS = [
 module.exports = {
   MCP_TOOL_DEFINITIONS,
 };
+

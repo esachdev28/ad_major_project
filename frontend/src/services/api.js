@@ -229,4 +229,27 @@ export async function analyzeDependencyImpact(data) {
   });
 }
 
+// ==========================================
+// MCP & AI-Assisted Diagnostics APIs
+// ==========================================
+
+export async function getMcpTools() {
+  return apiRequest('/api/mcp/tools');
+}
+
+export async function getDiagnosticsStatus() {
+  return apiRequest('/api/diagnostics/status');
+}
+
+export async function getDiagnosticsHistory() {
+  return apiRequest('/api/diagnostics/history');
+}
+
+export async function runDiagnosticInvestigation(data) {
+  return apiRequest('/api/diagnostics/investigate', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export { API_BASE_URL };
