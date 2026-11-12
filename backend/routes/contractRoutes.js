@@ -8,6 +8,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const { parseAndValidateOpenApi } = require('../services/contractParserService');
+const { compareOpenApiSpecs } = require('../services/contractDiffService');
 
 // ==============================================================================
 // GET /api/contracts
@@ -195,6 +196,64 @@ router.post('/upload', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to upload OpenAPI contract',
+    });
+  }
+});
+
+// ==============================================================================
+// POST /api/contracts/compare
+// Compares two stored APIVersion contracts (or inline specs) for breaking changes
+// ==============================================================================
+router.post('/compare', async (req, res) => {
+  try {
+    const { baselineVersionId, targetVersionId, baselineSpec, targetSpec } = req.body;
+
+    let rawV1 = baselineSpec;
+    let rawV2 = targetSpec;
+    let endpointName = 'Custom Comparison';
+
+    if (baselineVersionId && targetVersionId) {
+      const [v1, v2] = await Promise.all([
+        prisma.aPIVersion.findUnique({
+          where: { id: baselineVersionId },
+          include: { endpoint: { select: { name: true } } },
+        }),
+        prisma.aPIVersion.findUnique({ where: { id: targetVersionId } }),
+      ]);
+
+      if (!v1 || !v2) {
+        return res.status(404).json({
+          success: false,
+          message: 'One or both selected contract versions could not be found.',
+        });
+      }
+
+      rawV1 = v1.specification;
+      rawV2 = v2.specification;
+      endpointName = v1.endpoint?.name || endpointName;
+    }
+
+    if (!rawV1 || !rawV2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both baseline and target contract versions or specifications are required.',
+      });
+    }
+
+    const diffReport = compareOpenApiSpecs(rawV1, rawV2);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        endpointName,
+        ...diffReport,
+      },
+    });
+  } catch (error) {
+    console.error('Contract comparison error:', error.message);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to compare API contracts',
     });
   }
 });

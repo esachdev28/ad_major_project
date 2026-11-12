@@ -181,4 +181,11 @@ export async function deleteContractVersion(versionId) {
   return apiRequest(`/api/contracts/${encodeURIComponent(versionId)}`, { method: 'DELETE' });
 }
 
+export async function compareContracts(baselineVersionId, targetVersionId) {
+  return apiRequest('/api/contracts/compare', {
+    method: 'POST',
+    body: JSON.stringify({ baselineVersionId, targetVersionId }),
+  });
+}
+
 export { API_BASE_URL };
