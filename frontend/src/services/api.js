@@ -33,6 +33,28 @@
 // Can still be overridden with VITE_API_URL if connecting to a separate host.
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
+export function getAuthToken() {
+  return typeof localStorage !== 'undefined' ? localStorage.getItem('api_sentinel_token') : null;
+}
+
+export function setAuthToken(token) {
+  if (typeof localStorage !== 'undefined') {
+    if (token) localStorage.setItem('api_sentinel_token', token);
+    else localStorage.removeItem('api_sentinel_token');
+  }
+}
+
+export function getActiveOrgId() {
+  return typeof localStorage !== 'undefined' ? localStorage.getItem('api_sentinel_org_id') : null;
+}
+
+export function setActiveOrgId(orgId) {
+  if (typeof localStorage !== 'undefined') {
+    if (orgId) localStorage.setItem('api_sentinel_org_id', orgId);
+    else localStorage.removeItem('api_sentinel_org_id');
+  }
+}
+
 /**
  * Helper to execute a fetch request with timeout and friendly error formatting.
  * Handles the scenario where the Express server is not running at all.
@@ -43,10 +65,20 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
 
+  const token = getAuthToken();
+  const orgId = getActiveOrgId();
+  const authHeaders = {};
+  if (token) authHeaders['Authorization'] = `Bearer ${token}`;
+  if (orgId) authHeaders['x-organization-id'] = orgId;
+
   try {
     const response = await fetch(url, {
       ...options,
-      headers: { 'Content-Type': 'application/json', ...options.headers },
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...options.headers,
+      },
     });
 
     if (!response.ok) {
@@ -250,6 +282,66 @@ export async function runDiagnosticInvestigation(data) {
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+// ==========================================
+// Authentication & Organization APIs (Phase 2)
+// ==========================================
+
+export async function registerUser(data) {
+  const res = await apiRequest('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  if (res.token) {
+    setAuthToken(res.token);
+    if (res.organization?.id) setActiveOrgId(res.organization.id);
+  }
+  return res;
+}
+
+export async function loginUser(data) {
+  const res = await apiRequest('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  if (res.token) {
+    setAuthToken(res.token);
+    if (res.activeOrganization?.id) setActiveOrgId(res.activeOrganization.id);
+  }
+  return res;
+}
+
+export async function getCurrentUser() {
+  return apiRequest('/api/auth/me');
+}
+
+export async function switchOrganization(organizationId) {
+  const res = await apiRequest('/api/auth/switch-org', {
+    method: 'POST',
+    body: JSON.stringify({ organizationId }),
+  });
+  if (res.token) {
+    setAuthToken(res.token);
+    setActiveOrgId(organizationId);
+  }
+  return res;
+}
+
+export async function getOrganizations() {
+  return apiRequest('/api/organizations');
+}
+
+export async function createOrganization(name) {
+  return apiRequest('/api/organizations', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function logoutUser() {
+  setAuthToken(null);
+  setActiveOrgId(null);
 }
 
 export { API_BASE_URL };

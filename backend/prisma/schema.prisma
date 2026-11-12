@@ -27,20 +27,59 @@ generator client {
 
 // ------------------------------------------------------------------------------
 // Model 1: User
-// Represents developers or teams who own and monitor registered API endpoints.
-// Note: Authentication is not implemented in Day 1; this model provides the foundation.
+// Represents developers or platform team members who belong to organizations.
 // ------------------------------------------------------------------------------
 model User {
-  id        String        @id @default(cuid())
-  name      String
-  email     String        @unique
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id           String               @id @default(cuid())
+  name         String
+  email        String               @unique
+  passwordHash String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
 
-  // Relationships: One User can own multiple APIEndpoint records
-  endpoints APIEndpoint[]
+  // Relationships
+  endpoints    APIEndpoint[]
+  memberships  OrganizationMember[]
 
   @@map("users")
+}
+
+// ------------------------------------------------------------------------------
+// Model 1b: Organization (Multi-Tenant Isolation)
+// Represents an organization / workspace that scopes endpoints, services, and members.
+// ------------------------------------------------------------------------------
+model Organization {
+  id          String               @id @default(cuid())
+  name        String
+  slug        String               @unique
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  members     OrganizationMember[]
+  endpoints   APIEndpoint[]
+  services    Service[]
+
+  @@map("organizations")
+}
+
+// ------------------------------------------------------------------------------
+// Model 1c: OrganizationMember (RBAC Roles)
+// Junction model mapping Users to Organizations with roles: OWNER, ADMIN, MEMBER
+// ------------------------------------------------------------------------------
+model OrganizationMember {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String       @default("MEMBER") // OWNER, ADMIN, MEMBER
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("organization_members")
 }
 
 // ------------------------------------------------------------------------------
@@ -58,11 +97,14 @@ model APIEndpoint {
   timeout          Int           @default(5000) // Request timeout in milliseconds
   expectedStatus   Int           @default(200) // Expected HTTP status code
   failureThreshold Int           @default(3) // Consecutive failures before creating an incident
-  headers          String?       // JSON string of custom request headers
+  headers          String?       // JSON string of custom request headers (encrypted at rest)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  // Optional owner relationship: If a user is deleted, endpoint remains with userId null
+  // Tenant Scoping & Ownership
+  organizationId   String?
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   userId           String?
   user             User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
@@ -73,6 +115,7 @@ model APIEndpoint {
   services          Service[]
   diagnosticReports DiagnosticReport[]
 
+  @@index([organizationId])
   @@index([userId])
   @@index([url])
   @@map("api_endpoints")
@@ -152,15 +195,17 @@ model APIVersion {
 // Represents an internal or external microservice or consumer application.
 // ------------------------------------------------------------------------------
 model Service {
-  id          String              @id @default(cuid())
-  name        String              @unique
-  description String?
-  criticality String              @default("MEDIUM") // CRITICAL, HIGH, MEDIUM, LOW
-  ownerTeam   String?
-  endpointId  String?
-  endpoint    APIEndpoint?        @relation(fields: [endpointId], references: [id], onDelete: SetNull)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id             String              @id @default(cuid())
+  name           String              @unique
+  description    String?
+  criticality    String              @default("MEDIUM") // CRITICAL, HIGH, MEDIUM, LOW
+  ownerTeam      String?
+  endpointId     String?
+  endpoint       APIEndpoint?        @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  organizationId String?
+  organization   Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   // Directed graph relationships:
   // `consumers`: edges where this service is the upstream provider
@@ -168,6 +213,7 @@ model Service {
   consumers   ServiceDependency[] @relation("ProviderService")
   providers   ServiceDependency[] @relation("ConsumerService")
 
+  @@index([organizationId])
   @@index([endpointId])
   @@map("services")
 }

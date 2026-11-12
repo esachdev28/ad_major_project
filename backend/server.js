@@ -49,6 +49,8 @@ const contractRoutes = require('./routes/contractRoutes');
 const dependencyRoutes = require('./routes/dependencyRoutes');
 const mcpRoutes = require('./routes/mcpRoutes');
 const diagnosticsRoutes = require('./routes/diagnosticsRoutes');
+const authRoutes = require('./routes/authRoutes');
+const orgRoutes = require('./routes/orgRoutes');
 const { apiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
@@ -86,6 +88,8 @@ app.use(express.static(distPath));
 app.use('/api', apiLimiter);
 
 // Mount dedicated API routers
+app.use('/api/auth', authRoutes);
+app.use('/api/organizations', orgRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/endpoints', endpointRoutes);

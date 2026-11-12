@@ -4,8 +4,10 @@ const { validateUrlForMonitoring } = require('../utils/urlValidator');
 const { executeProbe } = require('../services/probeService');
 const { encrypt, decrypt } = require('../utils/encryption');
 const { probeLimiter } = require('../middleware/rateLimiter');
+const { optionalAuth } = require('../middleware/authMiddleware');
 
 const router = express.Router();
+router.use(optionalAuth);
 const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 const allowedFields = [
   'name',
@@ -199,6 +201,12 @@ router.post('/', async (req, res) => {
   const result = await validateEndpointInput(req.body);
   if (result.error) return res.status(400).json({ success: false, message: result.error });
   try {
+    if (req.organizationId) {
+      result.data.organizationId = req.organizationId;
+    }
+    if (req.user) {
+      result.data.userId = req.user.id;
+    }
     const endpoint = await prisma.aPIEndpoint.create({ data: result.data });
 
     // Execute an immediate initial probe so status is immediately populated

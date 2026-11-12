@@ -32,7 +32,7 @@
 
 import React from 'react';
 
-export default function Sidebar({ activeItem = 'Dashboard', onNavigate }) {
+export default function Sidebar({ activeItem = 'Dashboard', onNavigate, currentUser, onOpenAuth }) {
   // Navigation menu items required by Part 4
   const navItems = [
     { name: 'Dashboard', icon: '📊', isImplemented: true },
@@ -44,6 +44,8 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate }) {
     { name: 'Settings', icon: '⚙️', isImplemented: false },
   ];
 
+  const activeOrgName = currentUser?.activeOrganization?.name || currentUser?.organization?.name || 'Default Workspace';
+
   return (
     <aside className="sidebar">
       {/* Brand Header */}
@@ -53,6 +55,36 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate }) {
           <div className="brand-title">API Sentinel</div>
           <div className="brand-subtitle">Observability Suite</div>
         </div>
+      </div>
+
+      {/* Organization Workspace Card */}
+      <div
+        onClick={onOpenAuth}
+        style={{
+          cursor: 'pointer',
+          padding: '0.6rem 0.75rem',
+          backgroundColor: '#101623',
+          border: '1px solid #1e293b',
+          borderRadius: '8px',
+          marginBottom: '1.25rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          transition: 'all 0.15s ease',
+        }}
+        title="Manage Organization & Account"
+      >
+        <div style={{ overflow: 'hidden' }}>
+          <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
+            {currentUser ? 'Organization' : 'Workspace'}
+          </div>
+          <div style={{ fontSize: '0.825rem', color: '#f8fafc', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {activeOrgName}
+          </div>
+        </div>
+        <span style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: 500 }}>
+          {currentUser ? '⚙️' : 'Sign In'}
+        </span>
       </div>
 
       {/* Navigation List */}
