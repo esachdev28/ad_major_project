@@ -157,6 +157,10 @@ Defined across 8 models in `backend/prisma/schema.prisma`:
 | :--- | :--- |
 | **Health** | `GET /api/health`, `GET /api/health/db` |
 | **Dashboard** | `GET /api/dashboard/stats`, `GET /api/dashboard/analytics?hours=24` |
+| **Authentication** | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/switch-org` |
+| **Organizations** | `GET /api/organizations`, `POST /api/organizations`, `GET /api/organizations/:id/members`, `POST /api/organizations/:id/members` |
+| **Health** | `GET /api/health`, `GET /api/health/db` |
+| **Dashboard** | `GET /api/dashboard/stats`, `GET /api/dashboard/analytics` |
 | **Endpoints** | `GET /api/endpoints`, `GET /api/endpoints/:id`, `POST /api/endpoints`, `PUT /api/endpoints/:id`, `DELETE /api/endpoints/:id`, `POST /api/endpoints/:id/check`, `GET /api/endpoints/:id/history` |
 | **Incidents** | `GET /api/incidents`, `GET /api/incidents/:id`, `PATCH /api/incidents/:id/acknowledge`, `PATCH /api/incidents/:id/resolve` |
 | **Contracts** | `GET /api/contracts`, `GET /api/contracts/endpoint/:endpointId`, `GET /api/contracts/:versionId`, `POST /api/contracts/upload`, `POST /api/contracts/compare`, `DELETE /api/contracts/:versionId` |
@@ -197,9 +201,12 @@ If `NVIDIA_API_KEY` is omitted or the external endpoint is unavailable, the diag
 
 ---
 
-## 10. Security Protections
+## 10. Security Protections (Phase 13)
 
 - **SSRF & DNS Rebinding Guard (`utils/urlValidator.js`)**: Blocks non-HTTP(S) schemes, `localhost`, `127.0.0.1`, `::1`, RFC 1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local / cloud metadata IPs (`169.254.169.254`, `metadata.google.internal`), and resolves hostnames via DNS before storing or probing.
+- **3xx HTTP Redirect SSRF Re-validation (`services/probeService.js`)**: Probes execute with `redirect: 'manual'` and re-evaluate target URLs against the SSRF Guard at every redirect hop (up to 5 hops maximum) to prevent loopback/metadata redirect pivots.
+- **AES-256-GCM Encryption at Rest (`utils/encryption.js`)**: Sensitive custom endpoint `headers` (e.g. Bearer tokens, custom API keys) are authenticated and encrypted with AES-256-GCM before saving to PostgreSQL, with transparent backwards compatibility for legacy records.
+- **Express Rate Limiting (`middleware/rateLimiter.js`)**: Global IP-based rate limiting on `/api` routes (1000 req / 15 min) and strict burst limiting on manual probe executions (`/api/endpoints/:id/check`, 60 probes / min) to prevent denial-of-service and probe flooding.
 - **Credential Redaction**: Endpoint custom `headers` are stripped from MCP outputs and AI evidence snapshots; `Bearer` tokens, passwords, and `nvapi-` keys are masked in diagnostic reports and never exposed on `/api/diagnostics/status`.
 - **Safe YAML Parsing**: Uses `js-yaml` with `yaml.JSON_SCHEMA` and a 2 MB size cap.
 - **Read-Only MCP Boundary**: MCP tools enforce Zod argument validation and perform strictly read-only Prisma queries.
@@ -208,7 +215,7 @@ If `NVIDIA_API_KEY` is omitted or the external endpoint is unavailable, the diag
 
 ## 11. Automated Test Suite
 
-Run all 9 backend verification suites (covering SSRF, worker probing, incident lifecycle, OpenAPI validation, breaking-change diffing, cycle-safe dependency traversal, real MCP `stdio` client-server calls, NVIDIA AI diagnostics, and the full 8-step E2E demo scenario):
+Run all 11 backend verification suites (covering JWT auth & RBAC, SSRF, worker probing, incident lifecycle, OpenAPI validation, breaking-change diffing, cycle-safe dependency traversal, real MCP `stdio` client-server calls, NVIDIA AI diagnostics, full 8-step E2E demo scenario, and Phase 13 security hardening):
 ```bash
 cd backend
 npm test
@@ -218,6 +225,5 @@ npm test
 
 ## 12. Known Limitations
 
-- **Authentication & Multi-Tenant Organization Isolation**: The `User` model is present in Prisma, but login/JWT authentication and multi-tenant organization scoping (`Phase 2` in `TASK.md`) are not implemented in this sprint build.
 - **Frontend Automated Tests**: Verification relies on Vite production builds (`npm run build`) and comprehensive backend API/integration tests (`npm test`); standalone browser/React component unit tests (e.g. Vitest/Playwright) were not added.
 - **Local Network Monitoring**: Because SSRF protection blocks `127.0.0.1` and private subnets, internal intranet endpoints cannot be probed unless explicitly deployed outside blocked ranges.
