@@ -249,3 +249,4 @@ runAuthAndOrgTests().catch((err) => {
   console.error('\n❌ Auth and Organization verification failed:', err);
   process.exit(1);
 });
+

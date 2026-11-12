@@ -373,3 +373,4 @@ export default function AuthModal({ isOpen, onClose, currentUser, onAuthSuccess 
     </div>
   );
 }
+
