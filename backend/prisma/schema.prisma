@@ -66,10 +66,11 @@ model APIEndpoint {
   userId           String?
   user             User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  // Relationships: One endpoint has many health checks, incidents, and version specs
+  // Relationships: One endpoint has many health checks, incidents, version specs, and linked services
   healthChecks     HealthCheck[]
   incidents        Incident[]
   versions         APIVersion[]
+  services         Service[]
 
   @@index([userId])
   @@index([url])
@@ -143,4 +144,50 @@ model APIVersion {
   @@index([endpointId])
   @@index([specHash])
   @@map("api_versions")
+}
+
+// ------------------------------------------------------------------------------
+// Model 6: Service
+// Represents an internal or external microservice or consumer application.
+// ------------------------------------------------------------------------------
+model Service {
+  id          String              @id @default(cuid())
+  name        String              @unique
+  description String?
+  criticality String              @default("MEDIUM") // CRITICAL, HIGH, MEDIUM, LOW
+  ownerTeam   String?
+  endpointId  String?
+  endpoint    APIEndpoint?        @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  // Directed graph relationships:
+  // `consumers`: edges where this service is the upstream provider
+  // `providers`: edges where this service is the downstream consumer
+  consumers   ServiceDependency[] @relation("ProviderService")
+  providers   ServiceDependency[] @relation("ConsumerService")
+
+  @@index([endpointId])
+  @@map("services")
+}
+
+// ------------------------------------------------------------------------------
+// Model 7: ServiceDependency (Integration Edge)
+// Directed edge representing Provider -> Consumer dependency.
+// ------------------------------------------------------------------------------
+model ServiceDependency {
+  id              String   @id @default(cuid())
+  providerId      String
+  consumerId      String
+  contractVersion String?  // API version consumed (e.g. "1.0.0")
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  provider        Service  @relation("ProviderService", fields: [providerId], references: [id], onDelete: Cascade)
+  consumer        Service  @relation("ConsumerService", fields: [consumerId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, consumerId])
+  @@index([providerId])
+  @@index([consumerId])
+  @@map("service_dependencies")
 }

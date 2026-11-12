@@ -188,4 +188,45 @@ export async function compareContracts(baselineVersionId, targetVersionId) {
   });
 }
 
+// ==========================================
+// Dependency Graph & Impact Analysis APIs
+// ==========================================
+
+export async function getDependencyGraph() {
+  return apiRequest('/api/dependencies/graph');
+}
+
+export async function createService(data) {
+  return apiRequest('/api/dependencies/services', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteService(id) {
+  return apiRequest(`/api/dependencies/services/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function createIntegration(data) {
+  return apiRequest('/api/dependencies/integrations', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteIntegration(id) {
+  return apiRequest(`/api/dependencies/integrations/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function analyzeDependencyImpact(data) {
+  return apiRequest('/api/dependencies/impact', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export { API_BASE_URL };

@@ -29,6 +29,7 @@ import Dashboard from './pages/Dashboard';
 import Endpoints from './pages/Endpoints';
 import Incidents from './pages/Incidents';
 import Contracts from './pages/Contracts';
+import Dependencies from './pages/Dependencies';
 
 export default function App() {
   const [activeItem, setActiveItem] = useState('Dashboard');
@@ -45,6 +46,8 @@ export default function App() {
         <Incidents />
       ) : activeItem === 'Contract Analysis' ? (
         <Contracts />
+      ) : activeItem === 'Dependencies' ? (
+        <Dependencies />
       ) : (
         <Dashboard refreshKey={dashboardRefreshKey} onNavigateToEndpoints={() => setActiveItem('API Endpoints')} />
       )}

@@ -27,6 +27,8 @@ async function main() {
   console.log(`👤 User verified: ${user.name} (${user.id})`);
 
   // 2. Clear existing sample data for clean re-seed
+  await prisma.serviceDependency.deleteMany({});
+  await prisma.service.deleteMany({});
   await prisma.healthCheck.deleteMany({});
   await prisma.incident.deleteMany({});
   await prisma.aPIVersion.deleteMany({});
@@ -208,10 +210,66 @@ async function main() {
     data: {
       endpointId: createdEndpoints[1].id,
       version: '1.0.0',
+      title: 'Order Processing API',
+      format: 'JSON',
       specification: sampleOpenApiV1,
     },
   });
   console.log('📄 Seeded OpenAPI specification v1.0.0 for Order Processing Service');
+
+  // 7. Seed Services & Directed Dependencies (Step 7)
+  const paymentSvc = await prisma.service.create({
+    data: {
+      name: 'Payment Processing Gateway',
+      description: 'Core payment authorization and settlement service',
+      criticality: 'CRITICAL',
+      ownerTeam: 'Payments Core',
+      endpointId: createdEndpoints[3].id,
+    },
+  });
+  const orderSvc = await prisma.service.create({
+    data: {
+      name: 'Order Processing Service',
+      description: 'Manages customer checkout and order lifecycle',
+      criticality: 'HIGH',
+      ownerTeam: 'Checkout Team',
+      endpointId: createdEndpoints[1].id,
+    },
+  });
+  const billingSvc = await prisma.service.create({
+    data: {
+      name: 'Billing Service',
+      description: 'Generates customer invoices and ledger entries',
+      criticality: 'HIGH',
+      ownerTeam: 'Finance Platform',
+    },
+  });
+  const mobileApp = await prisma.service.create({
+    data: {
+      name: 'Mobile Application',
+      description: 'iOS and Android customer client app',
+      criticality: 'CRITICAL',
+      ownerTeam: 'Mobile Engineering',
+    },
+  });
+  const analyticsSvc = await prisma.service.create({
+    data: {
+      name: 'Analytics Service',
+      description: 'Real-time revenue and conversion telemetry pipeline',
+      criticality: 'MEDIUM',
+      ownerTeam: 'Data Science',
+    },
+  });
+
+  await prisma.serviceDependency.createMany({
+    data: [
+      { providerId: paymentSvc.id, consumerId: billingSvc.id, contractVersion: '1.0.0', notes: 'Captures settlement receipts' },
+      { providerId: paymentSvc.id, consumerId: mobileApp.id, contractVersion: '1.0.0', notes: 'Initiates client checkout' },
+      { providerId: orderSvc.id, consumerId: billingSvc.id, contractVersion: '1.0.0', notes: 'Reads finalized order totals' },
+      { providerId: billingSvc.id, consumerId: analyticsSvc.id, contractVersion: '1.0.0', notes: 'Streams invoice metrics (transitive)' },
+    ],
+  });
+  console.log('🕸️ Seeded 5 services and 4 directed integration dependencies');
 
   console.log('✅ Database seeding finished successfully!');
 }
