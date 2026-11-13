@@ -60,10 +60,11 @@ model APIEndpoint {
   userId      String?
   user        User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  // Relationships: One endpoint has many health checks, incidents, and version specs
+  // Relationships: One endpoint has many health checks, incidents, version specs, and integrations
   healthChecks HealthCheck[]
   incidents    Incident[]
   versions     APIVersion[]
+  integrations Integration[]
 
   @@index([userId])
   @@index([url])
@@ -129,4 +130,27 @@ model APIVersion {
 
   @@index([endpointId])
   @@map("api_versions")
+}
+
+// ------------------------------------------------------------------------------
+// Model 6: Integration
+// Represents downstream applications or services that consume an API endpoint.
+// Used for consumer dependency tracking and breaking-change impact assessment.
+// ------------------------------------------------------------------------------
+model Integration {
+  id           String      @id @default(cuid())
+  endpointId   String
+  consumerName String      // Name of the consuming application/service (e.g., "Checkout Gateway")
+  serviceType  String      @default("frontend") // frontend, microservice, mobile, third-party
+  contactEmail String?     // Point of contact for alerting affected teams
+  environment  String      @default("production") // production, staging, development
+  criticality  String      @default("HIGH") // CRITICAL, HIGH, MEDIUM, LOW
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Cascade delete: If the parent APIEndpoint is deleted, delete its consumer integrations
+  endpoint     APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@map("integrations")
 }
