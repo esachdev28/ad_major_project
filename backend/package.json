@@ -5,12 +5,26 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "seed": "node prisma/seed.js",
+    "worker": "node workers/monitoringWorker.js",
+    "mcp": "node mcp/mcpServer.js",
+    "test": "node tests/step2_auth_orgs.test.js && node tests/step2_endpoints.test.js && node tests/step3_monitoring.test.js && node tests/step4_incidents.test.js && node tests/step5_contracts.test.js && node tests/step6_diff.test.js && node tests/step7_dependencies.test.js && node tests/step8_mcp.test.js && node tests/step9_diagnostics.test.js && node tests/step10_e2e_demo.test.js && node tests/step13_security.test.js"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "prisma": "^6.19.3"
+    "express-rate-limit": "^8.7.4",
+    "ioredis": "^6.0.0",
+    "js-yaml": "^5.5.0",
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^6.19.3",
+    "zod": "^4.6.7"
   }
 }

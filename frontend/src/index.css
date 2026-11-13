@@ -158,6 +158,10 @@ body {
   cursor: pointer;
   transition: all 0.15s ease;
   border: 1px solid transparent;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  background: transparent;
 }
 
 .nav-item:hover {
@@ -202,7 +206,8 @@ body {
 /* =========================================================
    Main Content Layout
    ========================================================= */
-.main-wrapper {
+.main-wrapper,
+.main-layout {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -730,3 +735,41 @@ body {
   padding: 2px 6px;
   border-radius: 4px;
 }
+
+/* API endpoint management */
+.endpoints-content { max-width: 1200px; }
+.endpoints-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+.endpoints-heading h2 { font-size: 1.35rem; }
+.endpoints-heading p, .endpoint-description, .endpoint-date { color: var(--text-secondary); font-size: .85rem; margin-top: .3rem; }
+.endpoint-primary, .endpoint-secondary, .endpoint-danger, .endpoint-list-error button { border: 1px solid transparent; border-radius: var(--radius-sm); padding: .55rem .9rem; font: inherit; font-size: .85rem; cursor: pointer; }
+.endpoint-primary { color: #fff; background: var(--accent-blue); font-weight: 600; }
+.endpoint-primary:hover:not(:disabled) { background: #2563eb; }
+.endpoint-primary:disabled { opacity: .6; cursor: wait; }
+.endpoint-secondary { color: var(--text-primary); background: var(--bg-card); border-color: var(--border-card); }
+.endpoint-danger { color: #fca5a5; background: var(--status-error-bg); border-color: rgba(239,68,68,.25); }
+.endpoint-state { color: var(--text-secondary); padding: 2rem; text-align: center; }
+.endpoint-row { display: flex; justify-content: space-between; align-items: center; gap: 1.5rem; padding: 1.25rem 0; border-bottom: 1px solid var(--border-subtle); }
+.endpoint-row:last-child { border-bottom: 0; }
+.endpoint-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; }
+.endpoint-title-line h3 { font-size: 1rem; }
+.endpoint-url { color: #93c5fd; font-family: var(--font-mono); font-size: .8rem; overflow-wrap: anywhere; display: inline-block; margin-top: .45rem; }
+.endpoint-description { margin-top: .55rem; }
+.endpoint-date { color: var(--text-muted); font-size: .75rem; }
+.monitoring-unknown { color: var(--text-muted); background: rgba(100,116,139,.12); padding: 2px 7px; border-radius: 999px; font-size: .65rem; font-weight: 700; }
+.endpoint-actions { display: flex; gap: .5rem; flex-shrink: 0; }
+.endpoint-success { color: #6ee7b7; background: var(--status-success-bg); border-radius: var(--radius-sm); padding: .75rem 1rem; margin-bottom: 1rem; }
+.endpoint-error { color: #fca5a5; background: var(--status-error-bg); border-radius: var(--radius-sm); padding: .75rem 1rem; }
+.endpoint-list-error { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.endpoint-list-error button { color: white; background: rgba(239,68,68,.3); }
+.endpoint-modal-backdrop { position: fixed; inset: 0; z-index: 10; background: rgba(2,6,23,.76); display: grid; place-items: center; padding: 1rem; }
+.endpoint-modal { width: min(100%, 560px); max-height: 90vh; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border-card); border-radius: var(--radius-lg); padding: 1.5rem; box-shadow: 0 24px 80px rgba(0,0,0,.45); }
+.endpoint-modal .panel-header { margin-bottom: 1rem; }
+.endpoint-close { color: var(--text-secondary); font-size: 1.5rem; background: none; border: 0; cursor: pointer; }
+.endpoint-form { display: flex; flex-direction: column; gap: 1rem; }
+.endpoint-form label { display: flex; flex-direction: column; gap: .4rem; color: var(--text-secondary); font-size: .85rem; }
+.endpoint-form input, .endpoint-form select, .endpoint-form textarea { width: 100%; color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-card); border-radius: var(--radius-sm); padding: .7rem .8rem; font: inherit; }
+.endpoint-form input:focus, .endpoint-form select:focus, .endpoint-form textarea:focus { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.endpoint-form textarea { resize: vertical; }
+.optional-label { color: var(--text-muted); }
+.endpoint-form-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .25rem; }
+@media (max-width: 640px) { .endpoints-heading, .endpoint-row { align-items: flex-start; flex-direction: column; } .endpoint-actions { width: 100%; } }

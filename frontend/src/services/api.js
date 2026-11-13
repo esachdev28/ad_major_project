@@ -8,23 +8,39 @@
  *
  * 2. What its responsibilities are:
  *    - Define the backend Base URL (configurable via Vite env variables or fallback).
- *    - Execute HTTP GET requests to `/api/health` and `/api/dashboard/stats`.
+ *    - Manage JWT authentication tokens and active organization context.
+ *    - Execute HTTP requests with standardized JSON serialization and authentication headers.
+ *    - Provide typed, documented client methods for endpoints, incidents, contracts,
+ *      dependencies, MCP tools, and AI diagnostics.
  *    - Handle network errors gracefully (e.g. backend down / connection refused).
  *    - Parse JSON responses and return structured data to calling components.
  *
  * 3. Which functions it contains:
- *    - `checkHealth()`: Checks backend server connectivity and returns health status.
- *    - `checkDbHealth()`: Checks PostgreSQL database connectivity via Prisma.
- *    - `getDashboardStats()`: Fetches live database statistics from Express.
+ *    - Auth & Orgs: `getAuthToken`, `setAuthToken`, `getActiveOrgId`, `setActiveOrgId`,
+ *      `registerUser`, `loginUser`, `getCurrentUser`, `switchOrganization`, `getOrganizations`,
+ *      `createOrganization`, `logoutUser`.
+ *    - Health: `checkHealth`, `checkDbHealth`.
+ *    - Dashboard: `getDashboardStats`, `getDashboardAnalytics`.
+ *    - Endpoints: `getEndpoints`, `getEndpoint`, `getEndpointHistory`, `createEndpoint`,
+ *      `updateEndpoint`, `deleteEndpoint`, `probeEndpoint`, `checkEndpointNow`.
+ *    - Incidents: `getIncidents`, `getIncidentById`, `updateIncidentStatus`,
+ *      `acknowledgeIncident`, `resolveIncident`.
+ *    - Contracts & Versions: `getContracts`, `getContractVersion`, `uploadContract`,
+ *      `deleteContractVersion`, `compareContracts`, `diffSpecifications`.
+ *    - Dependencies & Impact: `getDependencyGraph`, `createService`, `deleteService`,
+ *      `createIntegration`, `deleteIntegration`, `analyzeDependencyImpact`, `getImpactAssessment`.
+ *    - MCP & Diagnostics: `getMcpTools`, `callMcpTool`, `getDiagnosticsStatus`,
+ *      `getDiagnosticsHistory`, `runDiagnosticInvestigation`.
  *
  * 4. How it communicates with other files:
- *    - Imported by `Dashboard.jsx` (or other pages/components) to fetch data.
- *    - Communicates over HTTP with Express routes running on `http://localhost:5001`.
+ *    - Consumed by `Dashboard.jsx`, `Endpoints.jsx`, `Incidents.jsx`, `Contracts.jsx`,
+ *      `Dependencies.jsx`, `Diagnostics.jsx`, and `AuthModal.jsx`.
+ *    - Dispatches HTTP requests to Express endpoints mounted at `/api/*`.
  *
  * 5. Why this chosen approach is appropriate:
  *    - Native `fetch` is built into modern browsers; no extra library (like Axios) needed.
- *    - Clean async/await syntax is easy for a first-year student to understand and explain.
- *    - Centralized error handling prevents unhandled promise rejections and UI crashes.
+ *    - Clean async/await syntax is easy to maintain and explain.
+ *    - Preserves compatibility across single-page dashboard and multi-route views.
  */
 
 // Base URL for the API Sentinel backend.
@@ -32,6 +48,28 @@
 // because the React app and Express API are served from the exact same origin!
 // Can still be overridden with VITE_API_URL if connecting to a separate host.
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
+export function getAuthToken() {
+  return typeof localStorage !== 'undefined' ? localStorage.getItem('api_sentinel_token') : null;
+}
+
+export function setAuthToken(token) {
+  if (typeof localStorage !== 'undefined') {
+    if (token) localStorage.setItem('api_sentinel_token', token);
+    else localStorage.removeItem('api_sentinel_token');
+  }
+}
+
+export function getActiveOrgId() {
+  return typeof localStorage !== 'undefined' ? localStorage.getItem('api_sentinel_org_id') : null;
+}
+
+export function setActiveOrgId(orgId) {
+  if (typeof localStorage !== 'undefined') {
+    if (orgId) localStorage.setItem('api_sentinel_org_id', orgId);
+    else localStorage.removeItem('api_sentinel_org_id');
+  }
+}
 
 /**
  * Helper to execute a fetch request with timeout and friendly error formatting.
@@ -44,15 +82,18 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
 
-  const defaultHeaders = {
-    'Content-Type': 'application/json',
-  };
+  const token = getAuthToken();
+  const orgId = getActiveOrgId();
+  const authHeaders = {};
+  if (token) authHeaders['Authorization'] = `Bearer ${token}`;
+  if (orgId) authHeaders['x-organization-id'] = orgId;
 
   try {
     const response = await fetch(url, {
-      method: options.method || 'GET',
+      ...options,
       headers: {
-        ...defaultHeaders,
+        'Content-Type': 'application/json',
+        ...authHeaders,
         ...(options.headers || {})
       },
       body: options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : undefined
@@ -85,6 +126,10 @@ async function apiRequest(endpoint, options = {}) {
   }
 }
 
+// ==========================================
+// Health & Diagnostic APIs
+// ==========================================
+
 /**
  * Checks the health status of the Express backend.
  * Calls: GET /api/health
@@ -105,6 +150,10 @@ export async function checkDbHealth() {
   return await apiRequest('/api/health/db');
 }
 
+// ==========================================
+// Dashboard Metrics & Analytics APIs
+// ==========================================
+
 /**
  * Fetches dashboard operational metrics from Express.
  * Calls: GET /api/dashboard/stats
@@ -116,15 +165,51 @@ export async function getDashboardStats() {
 }
 
 /**
- * Endpoints API: Lists all registered endpoints with latest check and open incident status
+ * Fetches aggregated dashboard analytics over a time window.
+ * Calls: GET /api/dashboard/analytics?hours=X
+ */
+export async function getDashboardAnalytics(hours = 24) {
+  return await apiRequest(`/api/dashboard/analytics?hours=${hours}`);
+}
+
+// ==========================================
+// Endpoints API
+// ==========================================
+
+/**
+ * Endpoints API: Lists registered endpoints with optional filtering.
+ * Supports string filter or query parameter object.
  * Calls: GET /api/endpoints
  */
-export async function getEndpoints() {
-  return await apiRequest('/api/endpoints');
+export async function getEndpoints(params = {}) {
+  let query = '';
+  if (typeof params === 'string') {
+    query = params ? `?status=${encodeURIComponent(params)}` : '';
+  } else if (params && typeof params === 'object') {
+    const search = new URLSearchParams(params).toString();
+    query = search ? `?${search}` : '';
+  }
+  return await apiRequest(`/api/endpoints${query}`);
 }
 
 /**
- * Endpoints API: Registers a new endpoint for monitoring
+ * Endpoints API: Fetches single endpoint details by ID.
+ * Calls: GET /api/endpoints/:id
+ */
+export async function getEndpoint(id) {
+  return await apiRequest(`/api/endpoints/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Endpoints API: Fetches historical health checks for an endpoint.
+ * Calls: GET /api/endpoints/:id/history?hours=X
+ */
+export async function getEndpointHistory(id, hours = 24) {
+  return await apiRequest(`/api/endpoints/${encodeURIComponent(id)}/history?hours=${hours}`);
+}
+
+/**
+ * Endpoints API: Registers a new endpoint for monitoring.
  * Calls: POST /api/endpoints
  */
 export async function createEndpoint(endpointData) {
@@ -135,47 +220,139 @@ export async function createEndpoint(endpointData) {
 }
 
 /**
- * Endpoints API: Executes active failure detection probe on an endpoint
- * Calls: POST /api/endpoints/:id/probe
+ * Endpoints API: Updates an existing endpoint configuration.
+ * Calls: PUT /api/endpoints/:id
  */
-export async function probeEndpoint(id) {
-  return await apiRequest(`/api/endpoints/${id}/probe`, {
-    method: 'POST'
+export async function updateEndpoint(id, endpointData) {
+  return await apiRequest(`/api/endpoints/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: endpointData
   });
 }
 
 /**
- * Endpoints API: Deletes an endpoint
+ * Endpoints API: Deletes an endpoint.
  * Calls: DELETE /api/endpoints/:id
  */
 export async function deleteEndpoint(id) {
-  return await apiRequest(`/api/endpoints/${id}`, {
+  return await apiRequest(`/api/endpoints/${encodeURIComponent(id)}`, {
     method: 'DELETE'
   });
 }
 
 /**
- * Incidents API: Lists operational incidents
+ * Endpoints API: Triggers active failure detection probe on an endpoint.
+ * Calls: POST /api/endpoints/:id/probe
+ */
+export async function probeEndpoint(id) {
+  return await apiRequest(`/api/endpoints/${encodeURIComponent(id)}/probe`, {
+    method: 'POST'
+  });
+}
+
+/**
+ * Endpoints API: Immediate probe check (alias for test-suite compatibility).
+ * Calls: POST /api/endpoints/:id/check
+ */
+export async function checkEndpointNow(id) {
+  return await apiRequest(`/api/endpoints/${encodeURIComponent(id)}/check`, {
+    method: 'POST'
+  });
+}
+
+// ==========================================
+// Incident Management APIs
+// ==========================================
+
+/**
+ * Incidents API: Lists operational incidents with optional filtering.
+ * Supports string filter (status) or query parameter object.
  * Calls: GET /api/incidents
  */
-export async function getIncidents(status = '') {
-  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+export async function getIncidents(params = {}) {
+  let query = '';
+  if (typeof params === 'string') {
+    query = params ? `?status=${encodeURIComponent(params)}` : '';
+  } else if (params && typeof params === 'object') {
+    const search = new URLSearchParams(params).toString();
+    query = search ? `?${search}` : '';
+  }
   return await apiRequest(`/api/incidents${query}`);
 }
 
 /**
- * Incidents API: Updates incident status (e.g. RESOLVED)
+ * Incidents API: Fetches single incident by ID.
+ * Calls: GET /api/incidents/:id
+ */
+export async function getIncidentById(id) {
+  return await apiRequest(`/api/incidents/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Incidents API: Updates incident status (e.g. RESOLVED, INVESTIGATING).
  * Calls: PATCH /api/incidents/:id
  */
 export async function updateIncidentStatus(id, status) {
-  return await apiRequest(`/api/incidents/${id}`, {
+  return await apiRequest(`/api/incidents/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: { status }
   });
 }
 
 /**
- * Breaking-Change Engine: Compares two OpenAPI specs for breaking changes
+ * Incidents API: Acknowledges an active incident.
+ * Calls: PATCH /api/incidents/:id/acknowledge
+ */
+export async function acknowledgeIncident(id) {
+  return await apiRequest(`/api/incidents/${encodeURIComponent(id)}/acknowledge`, {
+    method: 'PATCH'
+  });
+}
+
+/**
+ * Incidents API: Resolves an active incident.
+ * Calls: PATCH /api/incidents/:id/resolve
+ */
+export async function resolveIncident(id) {
+  return await apiRequest(`/api/incidents/${encodeURIComponent(id)}/resolve`, {
+    method: 'PATCH'
+  });
+}
+
+// ==========================================
+// API Contract Management & Versioning
+// ==========================================
+
+export async function getContracts() {
+  return await apiRequest('/api/contracts');
+}
+
+export async function getContractVersion(versionId) {
+  return await apiRequest(`/api/contracts/${encodeURIComponent(versionId)}`);
+}
+
+export async function uploadContract(data) {
+  return await apiRequest('/api/contracts/upload', {
+    method: 'POST',
+    body: data
+  });
+}
+
+export async function deleteContractVersion(versionId) {
+  return await apiRequest(`/api/contracts/${encodeURIComponent(versionId)}`, {
+    method: 'DELETE'
+  });
+}
+
+export async function compareContracts(baselineVersionId, targetVersionId) {
+  return await apiRequest('/api/contracts/compare', {
+    method: 'POST',
+    body: { baselineVersionId, targetVersionId }
+  });
+}
+
+/**
+ * Breaking-Change Engine: Compares two OpenAPI specs for breaking changes.
  * Calls: POST /api/versions/diff
  */
 export async function diffSpecifications(diffPayload) {
@@ -185,16 +362,61 @@ export async function diffSpecifications(diffPayload) {
   });
 }
 
-/**
- * Impact Assessment Engine: Computes blast radius and lists affected consumers
- * Calls: GET /api/integrations/impact/:endpointId
- */
-export async function getImpactAssessment(endpointId) {
-  return await apiRequest(`/api/integrations/impact/${endpointId}`);
+// ==========================================
+// Dependency Graph & Impact Analysis APIs
+// ==========================================
+
+export async function getDependencyGraph() {
+  return await apiRequest('/api/dependencies/graph');
+}
+
+export async function createService(data) {
+  return await apiRequest('/api/dependencies/services', {
+    method: 'POST',
+    body: data
+  });
+}
+
+export async function deleteService(id) {
+  return await apiRequest(`/api/dependencies/services/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+export async function createIntegration(data) {
+  return await apiRequest('/api/dependencies/integrations', {
+    method: 'POST',
+    body: data
+  });
+}
+
+export async function deleteIntegration(id) {
+  return await apiRequest(`/api/dependencies/integrations/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+export async function analyzeDependencyImpact(data) {
+  return await apiRequest('/api/dependencies/impact', {
+    method: 'POST',
+    body: data
+  });
 }
 
 /**
- * MCP Diagnostics: Lists available tools
+ * Impact Assessment Engine: Computes blast radius and lists affected consumers.
+ * Calls: GET /api/integrations/impact/:endpointId
+ */
+export async function getImpactAssessment(endpointId) {
+  return await apiRequest(`/api/integrations/impact/${encodeURIComponent(endpointId)}`);
+}
+
+// ==========================================
+// MCP & AI-Assisted Diagnostics APIs
+// ==========================================
+
+/**
+ * MCP Diagnostics: Lists available tools.
  * Calls: GET /api/mcp/tools
  */
 export async function getMcpTools() {
@@ -202,7 +424,7 @@ export async function getMcpTools() {
 }
 
 /**
- * MCP Diagnostics: Invokes an MCP diagnostic tool
+ * MCP Diagnostics: Invokes an MCP diagnostic tool.
  * Calls: POST /api/mcp/tools/call
  */
 export async function callMcpTool(name, args = {}) {
@@ -210,6 +432,81 @@ export async function callMcpTool(name, args = {}) {
     method: 'POST',
     body: { name, arguments: args }
   });
+}
+
+export async function getDiagnosticsStatus() {
+  return await apiRequest('/api/diagnostics/status');
+}
+
+export async function getDiagnosticsHistory() {
+  return await apiRequest('/api/diagnostics/history');
+}
+
+export async function runDiagnosticInvestigation(data) {
+  return await apiRequest('/api/diagnostics/investigate', {
+    method: 'POST',
+    body: data
+  });
+}
+
+// ==========================================
+// Authentication & Organization APIs
+// ==========================================
+
+export async function registerUser(data) {
+  const res = await apiRequest('/api/auth/register', {
+    method: 'POST',
+    body: data
+  });
+  if (res.token) {
+    setAuthToken(res.token);
+    if (res.organization?.id) setActiveOrgId(res.organization.id);
+  }
+  return res;
+}
+
+export async function loginUser(data) {
+  const res = await apiRequest('/api/auth/login', {
+    method: 'POST',
+    body: data
+  });
+  if (res.token) {
+    setAuthToken(res.token);
+    if (res.activeOrganization?.id) setActiveOrgId(res.activeOrganization.id);
+  }
+  return res;
+}
+
+export async function getCurrentUser() {
+  return await apiRequest('/api/auth/me');
+}
+
+export async function switchOrganization(organizationId) {
+  const res = await apiRequest('/api/auth/switch-org', {
+    method: 'POST',
+    body: { organizationId }
+  });
+  if (res.token) {
+    setAuthToken(res.token);
+    setActiveOrgId(organizationId);
+  }
+  return res;
+}
+
+export async function getOrganizations() {
+  return await apiRequest('/api/organizations');
+}
+
+export async function createOrganization(name) {
+  return await apiRequest('/api/organizations', {
+    method: 'POST',
+    body: { name }
+  });
+}
+
+export function logoutUser() {
+  setAuthToken(null);
+  setActiveOrgId(null);
 }
 
 export { API_BASE_URL };

@@ -27,20 +27,59 @@ generator client {
 
 // ------------------------------------------------------------------------------
 // Model 1: User
-// Represents developers or teams who own and monitor registered API endpoints.
-// Note: Authentication is not implemented in Day 1; this model provides the foundation.
+// Represents developers or platform team members who belong to organizations.
 // ------------------------------------------------------------------------------
 model User {
-  id        String        @id @default(cuid())
-  name      String
-  email     String        @unique
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id           String               @id @default(cuid())
+  name         String
+  email        String               @unique
+  passwordHash String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
 
-  // Relationships: One User can own multiple APIEndpoint records
-  endpoints APIEndpoint[]
+  // Relationships
+  endpoints    APIEndpoint[]
+  memberships  OrganizationMember[]
 
   @@map("users")
+}
+
+// ------------------------------------------------------------------------------
+// Model 1b: Organization (Multi-Tenant Isolation)
+// Represents an organization / workspace that scopes endpoints, services, and members.
+// ------------------------------------------------------------------------------
+model Organization {
+  id          String               @id @default(cuid())
+  name        String
+  slug        String               @unique
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  members     OrganizationMember[]
+  endpoints   APIEndpoint[]
+  services    Service[]
+
+  @@map("organizations")
+}
+
+// ------------------------------------------------------------------------------
+// Model 1c: OrganizationMember (RBAC Roles)
+// Junction model mapping Users to Organizations with roles: OWNER, ADMIN, MEMBER
+// ------------------------------------------------------------------------------
+model OrganizationMember {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String       @default("MEMBER") // OWNER, ADMIN, MEMBER
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("organization_members")
 }
 
 // ------------------------------------------------------------------------------
@@ -48,24 +87,36 @@ model User {
 // Represents an external or internal HTTP API registered for observability.
 // ------------------------------------------------------------------------------
 model APIEndpoint {
-  id          String        @id @default(cuid())
-  name        String
-  url         String
-  method      String        @default("GET")
-  description String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id               String        @id @default(cuid())
+  name             String
+  url              String
+  method           String        @default("GET")
+  description      String?
+  isActive         Boolean       @default(true)
+  interval         Int           @default(60) // Monitoring interval in seconds
+  timeout          Int           @default(5000) // Request timeout in milliseconds
+  expectedStatus   Int           @default(200) // Expected HTTP status code
+  failureThreshold Int           @default(3) // Consecutive failures before creating an incident
+  headers          String?       // JSON string of custom request headers (encrypted at rest)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  // Optional owner relationship: If a user is deleted, endpoint remains with userId null
-  userId      String?
-  user        User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // Tenant Scoping & Ownership
+  organizationId   String?
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  // Relationships: One endpoint has many health checks, incidents, version specs, and integrations
-  healthChecks HealthCheck[]
-  incidents    Incident[]
-  versions     APIVersion[]
-  integrations Integration[]
+  userId           String?
+  user             User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  // Relationships: One endpoint has many health checks, incidents, version specs, linked services, integrations, and reports
+  healthChecks      HealthCheck[]
+  incidents         Incident[]
+  versions          APIVersion[]
+  services          Service[]
+  integrations      Integration[]
+  diagnosticReports DiagnosticReport[]
+
+  @@index([organizationId])
   @@index([userId])
   @@index([url])
   @@map("api_endpoints")
@@ -98,16 +149,20 @@ model HealthCheck {
 // Records operational disruptions or downtime detected for an API endpoint.
 // ------------------------------------------------------------------------------
 model Incident {
-  id          String      @id @default(cuid())
-  endpointId  String
-  title       String
-  description String?
-  status      String      @default("OPEN") // OPEN, INVESTIGATING, RESOLVED
-  createdAt   DateTime    @default(now())
-  resolvedAt  DateTime?
+  id              String      @id @default(cuid())
+  endpointId      String
+  title           String
+  description     String?
+  status          String      @default("OPEN") // OPEN, ACKNOWLEDGED, RESOLVED
+  severity        String      @default("HIGH") // CRITICAL, HIGH, MEDIUM
+  occurrenceCount Int         @default(1)
+  lastFailureAt   DateTime    @default(now())
+  acknowledgedAt  DateTime?
+  createdAt       DateTime    @default(now())
+  resolvedAt      DateTime?
 
   // Cascade delete: If the parent APIEndpoint is deleted, delete associated incidents
-  endpoint    APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  endpoint        APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
   @@index([endpointId])
   @@index([status])
@@ -122,6 +177,9 @@ model APIVersion {
   id            String      @id @default(cuid())
   endpointId    String
   version       String      // e.g. "v1.0.0", "v1.1.0"
+  title         String?
+  format        String      @default("JSON") // JSON or YAML
+  specHash      String?     // SHA-256 hash of canonical parsed spec for deduplication
   specification String      @db.Text // Full OpenAPI JSON or YAML content
   createdAt     DateTime    @default(now())
 
@@ -129,9 +187,11 @@ model APIVersion {
   endpoint      APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
   @@index([endpointId])
+  @@index([specHash])
   @@map("api_versions")
 }
 
+// ------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------
 // Model 6: Integration
 // Represents downstream applications or services that consume an API endpoint.
@@ -153,4 +213,78 @@ model Integration {
 
   @@index([endpointId])
   @@map("integrations")
+}
+
+// ------------------------------------------------------------------------------
+// Model 7: Service
+// Represents an internal or external microservice or consumer application.
+// ------------------------------------------------------------------------------
+model Service {
+  id             String              @id @default(cuid())
+  name           String              @unique
+  description    String?
+  criticality    String              @default("MEDIUM") // CRITICAL, HIGH, MEDIUM, LOW
+  ownerTeam      String?
+  endpointId     String?
+  endpoint       APIEndpoint?        @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  organizationId String?
+  organization   Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  // Directed graph relationships:
+  // `consumers`: edges where this service is the upstream provider
+  // `providers`: edges where this service is the downstream consumer
+  consumers   ServiceDependency[] @relation("ProviderService")
+  providers   ServiceDependency[] @relation("ConsumerService")
+
+  @@index([organizationId])
+  @@index([endpointId])
+  @@map("services")
+}
+
+// ------------------------------------------------------------------------------
+// Model 8: ServiceDependency (Integration Edge)
+// Directed edge representing Provider -> Consumer dependency.
+// ------------------------------------------------------------------------------
+model ServiceDependency {
+  id              String   @id @default(cuid())
+  providerId      String
+  consumerId      String
+  contractVersion String?  // API version consumed (e.g. "1.0.0")
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  provider        Service  @relation("ProviderService", fields: [providerId], references: [id], onDelete: Cascade)
+  consumer        Service  @relation("ConsumerService", fields: [consumerId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, consumerId])
+  @@index([providerId])
+  @@index([consumerId])
+  @@map("service_dependencies")
+}
+
+// ------------------------------------------------------------------------------
+// Model 9: DiagnosticReport
+// Stores AI-assisted and evidence-backed incident investigation reports.
+// ------------------------------------------------------------------------------
+model DiagnosticReport {
+  id              String       @id @default(cuid())
+  endpointId      String?
+  incidentId      String?
+  query           String       @db.Text
+  provider        String       // e.g. "nvidia-nim" or "deterministic-fallback"
+  model           String       // e.g. "meta/llama-3.1-70b-instruct"
+  summary         String       @db.Text
+  verifiedFacts   String       @db.Text // JSON array of verified facts from telemetry
+  hypotheses      String       @db.Text // JSON array of diagnostic hypotheses
+  recommendations String       @db.Text // JSON array of safe remediation steps
+  evidenceContext String       @db.Text // Sanitized JSON snapshot of collected platform evidence
+  createdAt       DateTime     @default(now())
+
+  endpoint        APIEndpoint? @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+
+  @@index([endpointId])
+  @@index([createdAt])
+  @@map("diagnostic_reports")
 }

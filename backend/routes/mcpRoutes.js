@@ -1,5 +1,5 @@
 /**
- * mcpRoutes.js — Model Context Protocol (MCP) Diagnostic Server
+ * mcpRoutes.js — Model Context Protocol (MCP) Diagnostic Server & HTTP Bridge
  * 
  * 1. Why this file exists:
  *    Exposes API Sentinel's backend observability and intelligence through the
@@ -8,355 +8,146 @@
  *    diffs for breaking changes, and investigate downstream consumer impacts.
  * 
  * 2. What its responsibilities are:
- *    - GET /api/mcp/tools : Expose structured MCP tool definitions with JSON Schemas.
- *    - POST /api/mcp/tools/call : Execute an MCP tool by name with validated arguments.
- *    - POST /api/mcp : Provide standard JSON-RPC 2.0 handler (`tools/list`, `tools/call`)
- *      for native MCP-compatible AI clients.
+ *    - GET /api/mcp/tools : Expose structured MCP tool definitions with schemas for both UI and MCP clients.
+ *    - POST /api/mcp/invoke : Execute registered read-only MCP tool with strict Zod validation.
+ *    - POST /api/mcp/tools/call : REST endpoint for invoking an MCP diagnostic tool.
+ *    - POST /api/mcp : Provide standard JSON-RPC 2.0 handler (tools/list, tools/call) for native MCP clients.
  * 
  * 3. Which MCP Tools are exposed:
- *    - `get_endpoint_health` : Retrieves latency trends, uptime %, and recent probe logs for an endpoint.
- *    - `inspect_incidents` : Fetches operational incident logs, error details, and status.
+ *    - `get_endpoint_health` : Retrieves latency trends, uptime %, and recent probe logs.
+ *    - `get_recent_incidents` / `inspect_incidents` : Fetches operational incident logs and error details.
  *    - `compare_api_contracts` : Compares OpenAPI specs to diagnose breaking contract modifications.
- *    - `investigate_impact` : Evaluates downstream consumers and blast radius affected by an endpoint.
+ *    - `get_affected_consumers` / `investigate_impact` : Evaluates downstream consumers and blast radius.
+ *    - `analyze_api_risk` : Computes deterministic composite risk score.
+ *    - `get_latency_history` : Retrieves percentile latency distribution.
  * 
  * 4. How it communicates with other files:
- *    - Queries Prisma models (`aPIEndpoint`, `healthCheck`, `incident`, `aPIVersion`, `integration`).
- *    - Imports `compareSpecifications` from `./versionRoutes`.
+ *    - Uses `MCP_TOOL_DEFINITIONS` from `../mcp/mcpTools`.
+ *    - Uses `prisma` from `../lib/prisma`.
  *    - Mounted in `server.js` under `/api/mcp`.
- * 
- * 5. Why this chosen approach is appropriate:
- *    - Conforms to Model Context Protocol specification without requiring external binary bridges.
- *    - Supports both RESTful discovery and JSON-RPC 2.0 payloads in standard JavaScript.
- *    - Returns structured markdown / text evidence formatted specifically for AI reasoning.
- * 
- * 6. MCP Request Flow:
- *    AI Agent / MCP Client -> POST /api/mcp (tools/call) -> Execute Sentinel Diagnostic
- *    -> Query PostgreSQL -> Format structured evidence text -> Return MCP content envelope.
  */
 
 const express = require('express');
+const { z } = require('zod');
 const router = express.Router();
 const prisma = require('../lib/prisma');
-const { compareSpecifications } = require('./versionRoutes');
+const { MCP_TOOL_DEFINITIONS } = require('../mcp/mcpTools');
 
-// Definition of all MCP tools exposed by API Sentinel
-const MCP_TOOLS = [
-  {
-    name: 'get_endpoint_health',
-    description: 'Retrieves real-time health telemetry, latency measurements, and recent probe outcomes for a registered API endpoint.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        endpointId: {
-          type: 'string',
-          description: 'Unique identifier of the APIEndpoint in API Sentinel'
-        },
-        limit: {
-          type: 'integer',
-          description: 'Number of recent health checks to retrieve (default: 10)',
-          default: 10
-        }
-      },
-      required: ['endpointId']
-    }
-  },
-  {
-    name: 'inspect_incidents',
-    description: 'Inspects active or historical operational disruptions, failure causes, and resolution details across monitored APIs.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        status: {
-          type: 'string',
-          enum: ['OPEN', 'INVESTIGATING', 'RESOLVED', 'ALL'],
-          description: 'Filter incidents by lifecycle status (default: OPEN)',
-          default: 'OPEN'
-        },
-        endpointId: {
-          type: 'string',
-          description: 'Optional endpoint ID to filter incidents for a specific service'
-        }
+// Helper to execute any registered MCP tool
+async function runTool(toolName, args = {}) {
+  // 1. Try finding in MCP_TOOL_DEFINITIONS from mcpTools.js
+  const toolDef = MCP_TOOL_DEFINITIONS.find(
+    (t) => t.name === toolName ||
+    (toolName === 'inspect_incidents' && t.name === 'get_recent_incidents') ||
+    (toolName === 'investigate_impact' && t.name === 'get_affected_consumers')
+  );
+
+  if (toolDef) {
+    let validatedArgs = args;
+    if (toolDef.inputSchema) {
+      const zodObject = z.object(toolDef.inputSchema);
+      const parsed = zodObject.safeParse(args);
+      if (parsed.success) {
+        validatedArgs = parsed.data;
       }
     }
-  },
-  {
-    name: 'compare_api_contracts',
-    description: 'Compares two API specification contracts (OpenAPI/Swagger) to detect breaking changes such as removed endpoints, removed fields, newly required fields, or incompatible data types.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        oldVersionId: {
-          type: 'string',
-          description: 'Database ID of the base/original APIVersion'
-        },
-        newVersionId: {
-          type: 'string',
-          description: 'Database ID of the updated APIVersion'
-        },
-        oldSpec: {
-          type: 'string',
-          description: 'Raw JSON string of original OpenAPI specification (if comparing without saved IDs)'
-        },
-        newSpec: {
-          type: 'string',
-          description: 'Raw JSON string of modified OpenAPI specification (if comparing without saved IDs)'
-        }
-      }
-    }
-  },
-  {
-    name: 'investigate_impact',
-    description: 'Investigates downstream services, client applications, and integrations that depend on an API endpoint, assessing outage or breaking-change blast radius.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        endpointId: {
-          type: 'string',
-          description: 'Unique identifier of the APIEndpoint to analyze for consumer impact'
-        }
-      },
-      required: ['endpointId']
-    }
+    return await toolDef.handler(validatedArgs);
   }
-];
 
-/**
- * Diagnostic Tool Execution Engine
- * Executes tool logic and returns structured MCP response envelope.
- */
-async function executeMcpTool(name, args = {}) {
-  switch (name) {
-    case 'get_endpoint_health': {
-      const { endpointId, limit = 10 } = args;
-      if (!endpointId) {
-        throw new Error("Missing required argument: 'endpointId'");
-      }
-
-      const endpoint = await prisma.aPIEndpoint.findUnique({
-        where: { id: endpointId },
-        include: {
-          healthChecks: {
-            orderBy: { checkedAt: 'desc' },
-            take: Number(limit)
-          }
-        }
-      });
-
-      if (!endpoint) {
-        throw new Error(`Endpoint with ID '${endpointId}' was not found.`);
-      }
-
-      const checks = endpoint.healthChecks;
-      const total = checks.length;
-      const healthy = checks.filter(c => c.isHealthy).length;
-      const uptimePct = total > 0 ? Math.round((healthy / total) * 100) : 0;
-      const avgLatency = total > 0
-        ? Math.round(checks.reduce((sum, c) => sum + (c.latency || 0), 0) / total)
-        : 0;
-
-      const report = {
-        endpointId: endpoint.id,
-        name: endpoint.name,
-        url: endpoint.url,
-        method: endpoint.method,
-        currentStatus: checks[0]?.isHealthy ? 'HEALTHY' : (checks.length > 0 ? 'FAILING' : 'UNKNOWN'),
-        recentUptime: `${uptimePct}%`,
-        averageLatency: `${avgLatency} ms`,
-        checksRecorded: total,
-        latestChecks: checks.map(c => ({
-          timestamp: c.checkedAt,
-          statusCode: c.statusCode,
-          latency: `${c.latency} ms`,
-          isHealthy: c.isHealthy,
-          error: c.errorMessage || 'None'
-        }))
-      };
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `### Health Diagnostic for ${endpoint.name}\n` +
-                  `- **URL**: ${endpoint.method} ${endpoint.url}\n` +
-                  `- **Status**: ${report.currentStatus}\n` +
-                  `- **Recent Uptime**: ${report.recentUptime}\n` +
-                  `- **Average Latency**: ${report.averageLatency}\n\n` +
-                  `\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\``
-          }
-        ],
-        structuredData: report
-      };
-    }
-
-    case 'inspect_incidents': {
-      const { status = 'OPEN', endpointId } = args;
-      const whereClause = {};
-
-      if (status && status !== 'ALL') {
-        whereClause.status = status.toUpperCase();
-      }
-      if (endpointId) {
-        whereClause.endpointId = endpointId;
-      }
-
-      const incidents = await prisma.incident.findMany({
-        where: whereClause,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          endpoint: {
-            select: { name: true, url: true, method: true }
-          }
-        }
-      });
-
-      const incidentSummaries = incidents.map(inc => ({
-        id: inc.id,
-        endpoint: `${inc.endpoint.method} ${inc.endpoint.name} (${inc.endpoint.url})`,
-        title: inc.title,
-        description: inc.description,
-        status: inc.status,
-        createdAt: inc.createdAt,
-        resolvedAt: inc.resolvedAt
-      }));
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `### Incident Diagnostic Report\n` +
-                  `Found **${incidents.length}** incidents matching filter (Status: ${status || 'ALL'}):\n\n` +
-                  incidents.map(i => `* **[${i.status}]** ${i.title} (Endpoint: ${i.endpoint.name}) — Reported: ${new Date(i.createdAt).toLocaleString()}`).join('\n') +
-                  `\n\n\`\`\`json\n${JSON.stringify(incidentSummaries, null, 2)}\n\`\`\``
-          }
-        ],
-        structuredData: incidentSummaries
-      };
-    }
-
-    case 'compare_api_contracts': {
-      const { oldVersionId, newVersionId, oldSpec, newSpec } = args;
-
-      let parsedOld = null;
-      let parsedNew = null;
-
-      if (oldVersionId && newVersionId) {
-        const [v1, v2] = await Promise.all([
-          prisma.aPIVersion.findUnique({ where: { id: oldVersionId } }),
-          prisma.aPIVersion.findUnique({ where: { id: newVersionId } })
-        ]);
-
-        if (!v1 || !v2) {
-          throw new Error('One or both specification versions could not be found.');
-        }
-
-        parsedOld = JSON.parse(v1.specification);
-        parsedNew = JSON.parse(v2.specification);
-      } else if (oldSpec && newSpec) {
-        parsedOld = typeof oldSpec === 'string' ? JSON.parse(oldSpec) : oldSpec;
-        parsedNew = typeof newSpec === 'string' ? JSON.parse(newSpec) : newSpec;
-      } else {
-        throw new Error('Provide either (oldVersionId, newVersionId) or (oldSpec, newSpec).');
-      }
-
-      const diffResult = compareSpecifications(parsedOld, parsedNew);
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `### Contract Breaking-Change Diagnostic\n` +
-                  `- **Breaking Changes Detected**: ${diffResult.isBreaking ? '⚠️ YES' : '✅ NO'}\n` +
-                  `- **Risk Level**: ${diffResult.riskLevel}\n` +
-                  `- **Breaking Count**: ${diffResult.breakingCount}\n` +
-                  `- **Non-Breaking Count**: ${diffResult.nonBreakingCount}\n\n` +
-                  `#### Detailed Findings:\n` +
-                  diffResult.changes.map(c => `* ${c.isBreaking ? '❌ **[BREAKING]**' : 'ℹ️ [SAFE]'} ${c.message}`).join('\n') +
-                  `\n\n\`\`\`json\n${JSON.stringify(diffResult, null, 2)}\n\`\`\``
-          }
-        ],
-        structuredData: diffResult
-      };
-    }
-
-    case 'investigate_impact': {
-      const { endpointId } = args;
-      if (!endpointId) {
-        throw new Error("Missing required argument: 'endpointId'");
-      }
-
-      const endpoint = await prisma.aPIEndpoint.findUnique({
-        where: { id: endpointId },
-        include: {
-          integrations: true,
-          incidents: { where: { status: 'OPEN' } }
-        }
-      });
-
-      if (!endpoint) {
-        throw new Error(`Endpoint with ID '${endpointId}' not found.`);
-      }
-
-      const integrations = endpoint.integrations || [];
-      const criticalCount = integrations.filter(i => i.criticality === 'CRITICAL').length;
-      const highCount = integrations.filter(i => i.criticality === 'HIGH').length;
-
-      let blastRadius = 'LOW';
-      if (criticalCount > 0) blastRadius = 'CRITICAL';
-      else if (highCount > 0 || integrations.length > 2) blastRadius = 'HIGH';
-      else if (integrations.length > 0) blastRadius = 'MEDIUM';
-
-      const impact = {
-        endpoint: `${endpoint.method} ${endpoint.name} (${endpoint.url})`,
-        blastRadius,
-        hasActiveOutage: endpoint.incidents.length > 0,
-        totalConsumers: integrations.length,
-        criticalConsumers: criticalCount,
-        affectedServices: integrations.map(i => ({
-          name: i.consumerName,
-          type: i.serviceType,
-          criticality: i.criticality,
-          environment: i.environment,
-          contact: i.contactEmail || 'Unassigned'
-        }))
-      };
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `### Downstream Impact Assessment for ${endpoint.name}\n` +
-                  `- **Blast Radius Severity**: ${blastRadius}\n` +
-                  `- **Active Incidents**: ${endpoint.incidents.length > 0 ? '⚠️ YES' : '✅ NO'}\n` +
-                  `- **Dependent Consumers**: ${integrations.length} (${criticalCount} Critical, ${highCount} High)\n\n` +
-                  `#### Affected Downstream Consumers:\n` +
-                  integrations.map(i => `* **${i.consumerName}** [${i.criticality}] (${i.serviceType}, ${i.environment}) — Alert Contact: ${i.contactEmail || 'None'}`).join('\n') +
-                  `\n\n\`\`\`json\n${JSON.stringify(impact, null, 2)}\n\`\`\``
-          }
-        ],
-        structuredData: impact
-      };
-    }
-
-    default:
-      throw new Error(`Unknown MCP tool: '${name}'`);
+  // 2. Fallback execution for standalone endpoints
+  if (toolName === 'get_endpoint_health') {
+    const endpoint = await prisma.aPIEndpoint.findFirst({
+      where: args.endpointId ? { id: args.endpointId } : {},
+      include: { healthChecks: { orderBy: { checkedAt: 'desc' }, take: 10 } }
+    });
+    if (!endpoint) throw new Error('Endpoint not found');
+    return {
+      content: [{ type: 'text', text: `Health status for ${endpoint.name}: ${endpoint.url}` }],
+      structuredData: endpoint
+    };
   }
+
+  throw new Error(`Unknown MCP tool: '${toolName}'`);
 }
 
 // GET /api/mcp/tools
-// Exposes the list of diagnostic tools conforming to Model Context Protocol
+// Lists all registered MCP diagnostic tools
 router.get('/tools', (req, res) => {
+  const tools = MCP_TOOL_DEFINITIONS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    readOnly: true,
+    inputSchema: {
+      type: 'object',
+      properties: Object.keys(t.inputSchema).reduce((acc, k) => {
+        acc[k] = { description: t.inputSchema[k]?.description || '', type: 'string' };
+        return acc;
+      }, {})
+    },
+    parameters: Object.keys(t.inputSchema).map((paramName) => ({
+      name: paramName,
+      description: t.inputSchema[paramName]?.description || '',
+      optional: t.inputSchema[paramName]?.isOptional?.() ?? false,
+    })),
+  }));
+
   return res.status(200).json({
     success: true,
-    tools: MCP_TOOLS
+    serverName: 'api-sentinel-mcp',
+    transport: ['stdio', 'http-bridge'],
+    count: tools.length,
+    tools,
+    data: tools,
   });
+});
+
+// POST /api/mcp/invoke
+// Validates arguments via Zod and executes a registered read-only MCP tool
+router.post('/invoke', async (req, res) => {
+  try {
+    const toolName = req.body.tool || req.body.name;
+    const toolArgs = req.body.arguments || {};
+
+    if (!toolName || typeof toolName !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Tool name ("tool" or "name") is required.',
+      });
+    }
+
+    const result = await runTool(toolName, toolArgs);
+
+    if (result.isError) {
+      return res.status(404).json({
+        success: false,
+        tool: toolName,
+        data: result.structuredData,
+        message: result.structuredData?.error || 'Tool returned an error.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      tool: toolName,
+      data: result.structuredData,
+      content: result.content,
+    });
+  } catch (error) {
+    console.error('MCP HTTP invoke error:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to execute MCP tool',
+    });
+  }
 });
 
 // POST /api/mcp/tools/call
 // REST endpoint for invoking an MCP diagnostic tool
 router.post('/tools/call', async (req, res) => {
-  const { name, arguments: toolArgs } = req.body;
+  const toolName = req.body.name || req.body.tool;
+  const toolArgs = req.body.arguments || {};
 
-  if (!name) {
+  if (!toolName) {
     return res.status(400).json({
       success: false,
       message: "Missing 'name' of tool to execute"
@@ -364,13 +155,13 @@ router.post('/tools/call', async (req, res) => {
   }
 
   try {
-    const result = await executeMcpTool(name, toolArgs || {});
+    const result = await runTool(toolName, toolArgs);
     return res.status(200).json({
       success: true,
       data: result
     });
   } catch (error) {
-    console.error(`MCP Tool Execution Error (${name}):`, error.message);
+    console.error(`MCP Tool Execution Error (${toolName}):`, error.message);
     return res.status(500).json({
       success: false,
       message: error.message
@@ -396,14 +187,26 @@ router.post('/', async (req, res) => {
       return res.status(200).json({
         jsonrpc: '2.0',
         id,
-        result: { tools: MCP_TOOLS }
+        result: {
+          tools: MCP_TOOL_DEFINITIONS.map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: {
+              type: 'object',
+              properties: Object.keys(t.inputSchema).reduce((acc, k) => {
+                acc[k] = { description: t.inputSchema[k]?.description || '', type: 'string' };
+                return acc;
+              }, {})
+            }
+          }))
+        }
       });
     }
 
     if (method === 'tools/call') {
-      const toolName = params?.name;
+      const toolName = params?.name || params?.tool;
       const toolArgs = params?.arguments || {};
-      const toolResult = await executeMcpTool(toolName, toolArgs);
+      const toolResult = await runTool(toolName, toolArgs);
 
       return res.status(200).json({
         jsonrpc: '2.0',
@@ -428,4 +231,3 @@ router.post('/', async (req, res) => {
 });
 
 module.exports = router;
-

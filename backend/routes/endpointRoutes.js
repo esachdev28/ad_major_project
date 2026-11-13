@@ -1,317 +1,438 @@
 /**
- * endpointRoutes.js — API Endpoint Management & Failure Detection Probe
+ * endpointRoutes.js — API Endpoint Management, Failure Detection & Telemetry Probing
  * 
  * 1. Why this file exists:
  *    Manages the lifecycle of registered API endpoints in API Sentinel. It provides
- *    CRUD operations for monitored endpoints and executes real-time HTTP health probes
- *    to detect latency spikes, non-2xx status codes, and network outages.
+ *    CRUD operations, SSRF-safe URL validation, encrypted header storage, real-time
+ *    health probes, failure detection, incident auto-flagging, and latency percentile analytics.
  * 
  * 2. What its responsibilities are:
- *    - GET /api/endpoints : List all registered endpoints with latest health check and open incidents.
- *    - POST /api/endpoints : Register an endpoint for continuous observability.
- *    - GET /api/endpoints/:id : Retrieve endpoint details, recent checks, incidents, and consumers.
- *    - POST /api/endpoints/:id/probe : Active failure detection probe that pings the target URL,
- *      measures latency, writes a HealthCheck record, and automatically creates an Incident on failure.
- *    - DELETE /api/endpoints/:id : Remove an endpoint and cascade-delete associated telemetry.
+ *    - GET /api/endpoints : List monitored endpoints with uptime, latest check, and open incident status.
+ *    - GET /api/endpoints/:id : Retrieve endpoint details, checks, incidents, versions, and integrations.
+ *    - POST /api/endpoints : Create an endpoint with SSRF guard and execute an initial probe.
+ *    - PUT /api/endpoints/:id : Update endpoint configuration with validation.
+ *    - DELETE /api/endpoints/:id : Cascade-delete endpoint and associated telemetry.
+ *    - POST /api/endpoints/:id/check & POST /api/endpoints/:id/probe : Execute manual/on-demand health probe.
+ *    - GET /api/endpoints/:id/history : Fetch historical telemetry with P50/P95/P99 latency distribution.
  * 
  * 3. Which functions/handlers it contains:
- *    - router.get('/', ...) : List endpoints with relations.
- *    - router.post('/', ...) : Validate and store new APIEndpoint.
- *    - router.get('/:id', ...) : Detailed endpoint view.
- *    - router.post('/:id/probe', ...) : Failure detection ping engine using native fetch.
- *    - router.delete('/:id', ...) : Safe cascade deletion.
+ *    - `validateEndpointInput(body, isUpdate)` : SSRF guard, field validation, and AES-256 header encryption.
+ *    - Route handlers for GET, POST, PUT, DELETE, check/probe, and history.
  * 
  * 4. How it communicates with other files:
- *    - Imports `prisma` from `../lib/prisma` to execute PostgreSQL queries.
- *    - Mounted in `server.js` under `/api/endpoints`.
- *    - Consumed by `frontend/src/services/api.js` and MCP diagnostic tools.
+ *    - Uses `prisma` from `../lib/prisma`.
+ *    - Uses `validateUrlForMonitoring` from `../utils/urlValidator` (SSRF protection).
+ *    - Uses `executeProbe` from `../services/probeService`.
+ *    - Uses `encrypt`/`decrypt` from `../utils/encryption`.
+ *    - Uses `probeLimiter` from `../middleware/rateLimiter`.
+ *    - Uses `optionalAuth` from `../middleware/authMiddleware`.
  * 
  * 5. Why this chosen approach is appropriate:
- *    - Native Node.js `fetch` with AbortController handles timeouts cleanly without third-party HTTP clients.
- *    - Automatic incident generation on consecutive or single probe failure implements the core problem statement.
- * 
- * 6. Database Request Flow:
- *    Client -> POST /api/endpoints/:id/probe -> Fetch ping target URL -> Record HealthCheck
- *    -> (if failed) Record Incident -> PostgreSQL -> Express JSON Response.
+ *    - Preserves security hardening (SSRF, rate-limiting, encrypted headers).
+ *    - Unifies both `/check` and `/probe` routes for cross-client compatibility.
  */
 
 const express = require('express');
-const router = express.Router();
 const prisma = require('../lib/prisma');
+const { validateUrlForMonitoring } = require('../utils/urlValidator');
+const { executeProbe } = require('../services/probeService');
+const { encrypt, decrypt } = require('../utils/encryption');
+const { probeLimiter } = require('../middleware/rateLimiter');
+const { optionalAuth } = require('../middleware/authMiddleware');
+
+const router = express.Router();
+router.use(optionalAuth);
+
+const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
+const allowedFields = [
+  'name',
+  'url',
+  'method',
+  'description',
+  'isActive',
+  'interval',
+  'timeout',
+  'expectedStatus',
+  'headers',
+];
+
+async function validateEndpointInput(body, isUpdate = false) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object.' };
+  }
+  const keys = Object.keys(body);
+  const unsupported = keys.find((key) => !allowedFields.includes(key));
+  if (unsupported) return { error: `Field "${unsupported}" cannot be changed.` };
+  if (isUpdate && keys.length === 0) return { error: 'Provide at least one field to update.' };
+
+  const data = {};
+  if (!isUpdate || Object.hasOwn(body, 'name')) {
+    if (typeof body.name !== 'string' || !body.name.trim()) return { error: 'Name is required.' };
+    data.name = body.name.trim();
+  }
+
+  if (!isUpdate || Object.hasOwn(body, 'url')) {
+    if (typeof body.url !== 'string' || !body.url.trim()) return { error: 'URL is required.' };
+    const ssrfResult = await validateUrlForMonitoring(body.url.trim());
+    if (!ssrfResult.isValid) {
+      return { error: `URL rejected by SSRF Guard: ${ssrfResult.error}` };
+    }
+    data.url = ssrfResult.parsedUrl.toString();
+  }
+
+  if (!isUpdate || Object.hasOwn(body, 'method')) {
+    if (typeof body.method !== 'string' || !allowedMethods.includes(body.method.trim().toUpperCase())) {
+      return { error: 'Method must be GET, POST, PUT, PATCH, DELETE, or HEAD.' };
+    }
+    data.method = body.method.trim().toUpperCase();
+  }
+
+  if (Object.hasOwn(body, 'description')) {
+    if (body.description !== null && typeof body.description !== 'string') return { error: 'Description must be text.' };
+    data.description = typeof body.description === 'string' && body.description.trim() ? body.description.trim() : null;
+  }
+
+  if (Object.hasOwn(body, 'isActive')) {
+    data.isActive = Boolean(body.isActive);
+  }
+
+  if (Object.hasOwn(body, 'interval')) {
+    const parsed = parseInt(body.interval, 10);
+    if (isNaN(parsed) || parsed < 5) return { error: 'Monitoring interval must be at least 5 seconds.' };
+    data.interval = parsed;
+  }
+
+  if (Object.hasOwn(body, 'timeout')) {
+    const parsed = parseInt(body.timeout, 10);
+    if (isNaN(parsed) || parsed < 100 || parsed > 30000) return { error: 'Timeout must be between 100ms and 30000ms.' };
+    data.timeout = parsed;
+  }
+
+  if (Object.hasOwn(body, 'expectedStatus')) {
+    const parsed = parseInt(body.expectedStatus, 10);
+    if (isNaN(parsed) || parsed < 100 || parsed > 599) return { error: 'Expected HTTP status must be between 100 and 599.' };
+    data.expectedStatus = parsed;
+  }
+
+  if (Object.hasOwn(body, 'headers')) {
+    if (body.headers === null || body.headers === '') {
+      data.headers = null;
+    } else if (typeof body.headers === 'object') {
+      data.headers = encrypt(JSON.stringify(body.headers));
+    } else if (typeof body.headers === 'string') {
+      try {
+        JSON.parse(body.headers);
+        data.headers = encrypt(body.headers);
+      } catch (_) {
+        return { error: 'Headers must be a valid JSON object.' };
+      }
+    }
+  }
+
+  return { data };
+}
 
 // GET /api/endpoints
-// Lists all registered API endpoints with their latest health check and open incident count
+// Lists all registered API endpoints with latest check, uptime %, and open incident status
 router.get('/', async (req, res) => {
   try {
+    const { active, search } = req.query;
+    const where = {};
+
+    if (active !== undefined) {
+      where.isActive = active === 'true';
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { url: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
     const endpoints = await prisma.aPIEndpoint.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       include: {
         healthChecks: {
           orderBy: { checkedAt: 'desc' },
-          take: 1
+          take: 20,
         },
         incidents: {
           where: { status: 'OPEN' },
-          select: { id: true, title: true, status: true }
+          take: 5,
         },
         _count: {
           select: {
             integrations: true,
-            versions: true
-          }
-        }
-      }
+            versions: true,
+          },
+        },
+      },
     });
 
-    return res.status(200).json({
-      success: true,
-      data: endpoints,
-      message: 'Endpoints retrieved successfully'
+    const formatted = endpoints.map((ep) => {
+      const checks = ep.healthChecks || [];
+      const latestCheck = checks[0] || null;
+      const totalChecks = checks.length;
+      const healthyChecks = checks.filter((c) => c.isHealthy).length;
+      const uptime = totalChecks > 0 ? Math.round((healthyChecks / totalChecks) * 100) : 100;
+
+      return {
+        id: ep.id,
+        name: ep.name,
+        url: ep.url,
+        method: ep.method,
+        description: ep.description,
+        isActive: ep.isActive,
+        interval: ep.interval,
+        timeout: ep.timeout,
+        expectedStatus: ep.expectedStatus,
+        createdAt: ep.createdAt,
+        updatedAt: ep.updatedAt,
+        healthChecks: ep.healthChecks, // Preserved for Dashboard compatibility
+        latestCheck: latestCheck
+          ? {
+              id: latestCheck.id,
+              statusCode: latestCheck.statusCode,
+              latency: latestCheck.latency,
+              isHealthy: latestCheck.isHealthy,
+              errorMessage: latestCheck.errorMessage,
+              checkedAt: latestCheck.checkedAt,
+            }
+          : null,
+        uptime,
+        hasOpenIncident: ep.incidents && ep.incidents.length > 0,
+        incidents: ep.incidents,
+        _count: ep._count,
+      };
     });
+
+    res.json({ success: true, data: formatted });
   } catch (error) {
-    console.error('Error fetching endpoints:', error.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve endpoints from database'
-    });
-  }
-});
-
-// POST /api/endpoints
-// Registers a new API endpoint for monitoring
-router.post('/', async (req, res) => {
-  const { name, url, method = 'GET', description, userId } = req.body;
-
-  if (!name || !url) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation error: name and url are required fields'
-    });
-  }
-
-  // Basic URL structure validation
-  try {
-    new URL(url);
-  } catch (_) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation error: invalid URL format'
-    });
-  }
-
-  try {
-    const newEndpoint = await prisma.aPIEndpoint.create({
-      data: {
-        name,
-        url,
-        method: method.toUpperCase(),
-        description: description || null,
-        userId: userId || null
-      }
-    });
-
-    return res.status(201).json({
-      success: true,
-      data: newEndpoint,
-      message: 'API Endpoint registered successfully'
-    });
-  } catch (error) {
-    console.error('Error creating endpoint:', error.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to create endpoint in database'
-    });
+    console.error('Unable to list API endpoints:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to retrieve API endpoints.' });
   }
 });
 
 // GET /api/endpoints/:id
-// Retrieves full telemetry, history, and dependencies for a single endpoint
 router.get('/:id', async (req, res) => {
-  const { id } = req.params;
-
   try {
     const endpoint = await prisma.aPIEndpoint.findUnique({
-      where: { id },
+      where: { id: req.params.id },
       include: {
         healthChecks: {
           orderBy: { checkedAt: 'desc' },
-          take: 20
+          take: 20,
         },
         incidents: {
           orderBy: { createdAt: 'desc' },
-          take: 10
+          take: 10,
         },
         versions: {
-          orderBy: { createdAt: 'desc' }
+          orderBy: { createdAt: 'desc' },
         },
         integrations: {
-          orderBy: { createdAt: 'desc' }
-        }
-      }
+          orderBy: { createdAt: 'desc' },
+        },
+      },
     });
-
-    if (!endpoint) {
-      return res.status(404).json({
-        success: false,
-        message: `Endpoint with ID ${id} not found`
-      });
+    if (!endpoint) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+    if (endpoint.headers) {
+      endpoint.headers = decrypt(endpoint.headers);
     }
-
-    return res.status(200).json({
-      success: true,
-      data: endpoint,
-      message: 'Endpoint details retrieved successfully'
-    });
+    res.json({ success: true, data: endpoint });
   } catch (error) {
-    console.error('Error fetching endpoint details:', error.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve endpoint details'
-    });
+    console.error('Unable to retrieve API endpoint:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to retrieve API endpoint.' });
   }
 });
 
-// POST /api/endpoints/:id/probe
-// Failure Detection Engine: Active HTTP probe that measures latency, status, and creates incident if failing
-router.post('/:id/probe', async (req, res) => {
-  const { id } = req.params;
-
+// POST /api/endpoints
+router.post('/', async (req, res) => {
+  const result = await validateEndpointInput(req.body);
+  if (result.error) return res.status(400).json({ success: false, message: result.error });
   try {
-    const endpoint = await prisma.aPIEndpoint.findUnique({
-      where: { id }
-    });
-
-    if (!endpoint) {
-      return res.status(404).json({
-        success: false,
-        message: `Endpoint with ID ${id} not found`
-      });
+    if (req.organizationId) {
+      result.data.organizationId = req.organizationId;
     }
+    if (req.user) {
+      result.data.userId = req.user.id;
+    }
+    const endpoint = await prisma.aPIEndpoint.create({ data: result.data });
 
-    const startTime = Date.now();
-    let statusCode = null;
-    let isHealthy = false;
-    let errorMessage = null;
-    let latency = 0;
-
-    // Set a 7-second timeout for the probe using standard AbortController
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 7000);
-
+    // Execute an immediate initial probe so status is immediately populated
+    let latestCheck = null;
     try {
-      const response = await fetch(endpoint.url, {
-        method: endpoint.method,
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'APISentinel-HealthProbe/1.0'
-        }
-      });
-
-      clearTimeout(timeoutId);
-      latency = Date.now() - startTime;
-      statusCode = response.status;
-      // An endpoint is considered healthy if status is 2xx or 3xx
-      isHealthy = response.ok || (statusCode >= 200 && statusCode < 400);
-
-      if (!isHealthy) {
-        errorMessage = `HTTP check failed with status code ${statusCode} (${response.statusText || 'Error'})`;
-      }
-    } catch (fetchErr) {
-      clearTimeout(timeoutId);
-      latency = Date.now() - startTime;
-      isHealthy = false;
-
-      if (fetchErr.name === 'AbortError') {
-        errorMessage = 'Probe timed out after 7000ms';
-        statusCode = 504;
-      } else {
-        errorMessage = `Network failure: ${fetchErr.message}`;
-      }
+      const probeRes = await executeProbe(endpoint);
+      latestCheck = probeRes.check;
+    } catch (probeErr) {
+      console.warn('Initial probe warning:', probeErr.message);
     }
 
-    // 1. Record HealthCheck row in PostgreSQL
-    const checkRecord = await prisma.healthCheck.create({
-      data: {
-        endpointId: endpoint.id,
-        statusCode,
-        latency,
-        isHealthy,
-        errorMessage
-      }
-    });
+    const responseData = {
+      ...endpoint,
+      headers: endpoint.headers ? decrypt(endpoint.headers) : null,
+      latestCheck,
+    };
 
-    // 2. Automated Failure Detection & Incident Creation
-    // If the probe failed and there is no open incident yet, create one automatically
-    let createdIncident = null;
-    if (!isHealthy) {
-      const existingOpenIncident = await prisma.incident.findFirst({
-        where: {
-          endpointId: endpoint.id,
-          status: 'OPEN'
-        }
-      });
-
-      if (!existingOpenIncident) {
-        createdIncident = await prisma.incident.create({
-          data: {
-            endpointId: endpoint.id,
-            title: `Outage detected: ${endpoint.name} (${statusCode || 'Network Error'})`,
-            description: `Automated probe failure recorded at ${new Date().toISOString()}. ${errorMessage}. Measured response time: ${latency}ms.`,
-            status: 'OPEN'
-          }
-        });
-      }
-    }
-
-    return res.status(200).json({
+    res.status(201).json({
       success: true,
-      data: {
-        healthCheck: checkRecord,
-        incident: createdIncident,
-        isHealthy,
-        latency: `${latency} ms`,
-        statusCode
-      },
-      message: isHealthy ? 'Probe passed successfully' : 'Probe failed; telemetry and incident logged'
+      data: responseData,
+      message: 'API endpoint created and initially probed.',
     });
   } catch (error) {
-    console.error('Error running endpoint probe:', error.message);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while executing probe'
-    });
+    console.error('Unable to create API endpoint:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to create API endpoint.' });
+  }
+});
+
+// PUT /api/endpoints/:id
+router.put('/:id', async (req, res) => {
+  const result = await validateEndpointInput(req.body, true);
+  if (result.error) return res.status(400).json({ success: false, message: result.error });
+  try {
+    const existing = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!existing) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+    const endpoint = await prisma.aPIEndpoint.update({ where: { id: req.params.id }, data: result.data });
+    const responseData = {
+      ...endpoint,
+      headers: endpoint.headers ? decrypt(endpoint.headers) : null,
+    };
+    res.json({ success: true, data: responseData, message: 'API endpoint updated.' });
+  } catch (error) {
+    console.error('Unable to update API endpoint:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to update API endpoint.' });
   }
 });
 
 // DELETE /api/endpoints/:id
-// Removes an endpoint and cascades to checks, incidents, versions, and integrations
 router.delete('/:id', async (req, res) => {
-  const { id } = req.params;
-
   try {
-    await prisma.aPIEndpoint.delete({
-      where: { id }
+    const existing = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!existing) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+    // The schema's onDelete: Cascade rules remove checks, incidents, and versions.
+    await prisma.aPIEndpoint.delete({ where: { id: req.params.id } });
+    res.json({ success: true, message: 'API endpoint and its associated records were deleted.' });
+  } catch (error) {
+    console.error('Unable to delete API endpoint:', error.message);
+    res.status(500).json({ success: false, message: 'Unable to delete API endpoint.' });
+  }
+});
+
+// POST /api/endpoints/:id/check (Standard probe handler)
+router.post('/:id/check', probeLimiter, async (req, res) => {
+  try {
+    const endpoint = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id } });
+    if (!endpoint) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+
+    const probeResult = await executeProbe(endpoint);
+    res.status(200).json({
+      success: true,
+      data: probeResult.check,
+      message: probeResult.check.isHealthy
+        ? `Check passed with HTTP ${probeResult.check.statusCode} (${probeResult.check.latency}ms)`
+        : `Check failed: ${probeResult.check.errorMessage || 'HTTP Error'}`,
     });
+  } catch (error) {
+    console.error('Manual probe failed:', error.message);
+    res.status(500).json({ success: false, message: error.message || 'Failed to execute manual probe.' });
+  }
+});
+
+// POST /api/endpoints/:id/probe (Alias supporting failure probe response format)
+router.post('/:id/probe', probeLimiter, async (req, res) => {
+  try {
+    const endpoint = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id } });
+    if (!endpoint) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+
+    const probeResult = await executeProbe(endpoint);
+    res.status(200).json({
+      success: true,
+      data: {
+        healthCheck: probeResult.check,
+        incident: probeResult.incident || null,
+        isHealthy: probeResult.check.isHealthy,
+        latency: `${probeResult.check.latency} ms`,
+        statusCode: probeResult.check.statusCode,
+      },
+      message: probeResult.check.isHealthy
+        ? `Probe passed successfully with HTTP ${probeResult.check.statusCode} (${probeResult.check.latency}ms)`
+        : `Probe failed: ${probeResult.check.errorMessage || 'HTTP Error'}`,
+    });
+  } catch (error) {
+    console.error('Manual probe failed:', error.message);
+    res.status(500).json({ success: false, message: error.message || 'Failed to execute manual probe.' });
+  }
+});
+
+// GET /api/endpoints/:id/history
+router.get('/:id/history', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hours = parseInt(req.query.hours, 10) || 24;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const sinceDate = new Date(Date.now() - hours * 3600 * 1000);
+
+    const endpoint = await prisma.aPIEndpoint.findUnique({ where: { id } });
+    if (!endpoint) {
+      return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+    }
+
+    const checks = await prisma.healthCheck.findMany({
+      where: {
+        endpointId: id,
+        checkedAt: { gte: sinceDate },
+      },
+      orderBy: { checkedAt: 'desc' },
+      take: limit,
+    });
+
+    const total = checks.length;
+    const healthyCount = checks.filter((c) => c.isHealthy).length;
+    const uptime = total > 0 ? Number(((healthyCount / total) * 100).toFixed(2)) : 100;
+    const errorRate = total > 0 ? Number((((total - healthyCount) / total) * 100).toFixed(2)) : 0;
+
+    const latencies = checks
+      .map((c) => c.latency)
+      .filter((l) => typeof l === 'number')
+      .sort((a, b) => a - b);
+
+    const getPerc = (p) => {
+      if (latencies.length === 0) return 0;
+      const idx = Math.ceil((p / 100) * latencies.length) - 1;
+      return latencies[Math.max(0, Math.min(idx, latencies.length - 1))];
+    };
+
+    const statusDistribution = {};
+    for (const c of checks) {
+      const key = c.statusCode ? `${Math.floor(c.statusCode / 100)}xx` : 'Network/Timeout';
+      statusDistribution[key] = (statusDistribution[key] || 0) + 1;
+    }
 
     return res.status(200).json({
       success: true,
-      message: 'API Endpoint and associated telemetry deleted successfully'
+      data: {
+        endpointId: id,
+        endpointName: endpoint.name,
+        totalChecks: total,
+        uptime,
+        errorRate,
+        percentiles: {
+          p50: getPerc(50),
+          p95: getPerc(95),
+          p99: getPerc(99),
+        },
+        statusDistribution,
+        history: [...checks].reverse(),
+      },
     });
   } catch (error) {
-    if (error.code === 'P2025') {
-      return res.status(404).json({
-        success: false,
-        message: 'Endpoint not found'
-      });
-    }
-
-    console.error('Error deleting endpoint:', error.message);
+    console.error('Error fetching endpoint history:', error.message);
     return res.status(500).json({
       success: false,
-      message: 'Failed to delete endpoint'
+      message: 'Failed to retrieve endpoint history',
     });
   }
 });
 
 module.exports = router;
-

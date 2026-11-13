@@ -23,18 +23,82 @@
  *    - Direct and lightweight without unnecessary routing libraries on Day 1.
  */
 
-import React from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
+import Endpoints from './pages/Endpoints';
+import Incidents from './pages/Incidents';
+import Contracts from './pages/Contracts';
+import Dependencies from './pages/Dependencies';
+import Diagnostics from './pages/Diagnostics';
+import AuthModal from './components/AuthModal';
+import { getCurrentUser } from './services/api';
 
 export default function App() {
+  const [activeItem, setActiveItem] = useState('Dashboard');
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  const refreshDashboard = useCallback(() => setDashboardRefreshKey((key) => key + 1), []);
+
+  const loadUser = useCallback(async () => {
+    try {
+      const res = await getCurrentUser();
+      if (res.success && res.user) {
+        setCurrentUser(res);
+      } else {
+        setCurrentUser(null);
+      }
+    } catch (_) {
+      setCurrentUser(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUser();
+  }, [loadUser]);
+
+  const handleAuthSuccess = (authData) => {
+    if (authData) {
+      loadUser();
+    } else {
+      setCurrentUser(null);
+    }
+    refreshDashboard();
+  };
+
   return (
     <div className="app-container">
-      {/* Persistent Left Navigation */}
-      <Sidebar activeItem="Dashboard" />
+      {/* Persistent Left Navigation with Multi-Tenant Organization Switcher */}
+      <Sidebar
+        activeItem={activeItem}
+        onNavigate={setActiveItem}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+      />
 
-      {/* Main View Area (Dashboard) */}
-      <Dashboard />
+      {activeItem === 'API Endpoints' ? (
+        <Endpoints onEndpointsChanged={refreshDashboard} />
+      ) : activeItem === 'Incidents' ? (
+        <Incidents />
+      ) : activeItem === 'Contract Analysis' ? (
+        <Contracts />
+      ) : activeItem === 'Dependencies' ? (
+        <Dependencies />
+      ) : activeItem === 'AI Diagnostics' ? (
+        <Diagnostics />
+      ) : (
+        <Dashboard refreshKey={dashboardRefreshKey} onNavigateToEndpoints={() => setActiveItem('API Endpoints')} />
+      )}
+
+      {/* Authentication & Organization Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onAuthSuccess={handleAuthSuccess}
+      />
     </div>
   );
 }

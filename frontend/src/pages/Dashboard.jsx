@@ -1,32 +1,33 @@
 /**
- * Dashboard.jsx — API Sentinel Central Observability & Diagnostics Dashboard
+ * Dashboard.jsx - API Sentinel Central Observability & Diagnostics Dashboard
  * 
  * 1. Why this file exists:
- *    The central UI controller for API Sentinel. It orchestrates real-time telemetry,
+ *    The central UI controller for API Sentinel. It orchestrates system health telemetry,
  *    live HTTP failure probing, incident tracking, contract breaking-change analysis,
- *    and Model Context Protocol (MCP) diagnostic tools within a unified single-origin UI.
+ *    and Model Context Protocol (MCP) diagnostic tools within a responsive interface.
  * 
  * 2. What its responsibilities are:
- *    - Monitor and display server, database, and fleet telemetry (total APIs, uptime %, latency).
+ *    - Monitor and display server, database, and fleet telemetry metrics.
+ *    - Display fleet latency distribution and percentile curves (P50, P95, P99).
  *    - Execute on-demand active HTTP health probes against registered endpoints.
  *    - Display and resolve operational incidents in real-time.
- *    - Provide an interactive Breaking-Change Diff analyzer between OpenAPI specifications.
- *    - Provide an MCP Diagnostic Tool runner for AI-assisted troubleshooting.
+ *    - Provide an interactive Breaking-Change Diff analyzer between OpenAPI versions.
+ *    - Provide an MCP Diagnostic Tool runner for AI-assisted incident root-cause analysis.
  * 
  * 3. Which functions/components it contains:
- *    - `Dashboard()` : Main React page component.
- *    - `loadDashboardData()` : Concurrently loads health, stats, endpoints, and incidents.
- *    - `handleProbe(endpointId)` : Triggers active failure detection probe and updates UI.
- *    - `handleResolveIncident(id)` : Marks an incident as RESOLVED in PostgreSQL.
- *    - `handleRunContractDiff()` : Compares sample v1 vs v2 contracts to demonstrate breaking changes.
- *    - `handleRunMcpDiagnostic(toolName)` : Executes structured MCP diagnostic tools.
+ *    - `Dashboard()`: Main React page component.
+ *    - `loadDashboardData()`: Concurrently loads health, stats, analytics, endpoints, incidents.
+ *    - `handleProbe(endpointId)`: Triggers active failure detection probe.
+ *    - `handleResolveIncident(id)`: Marks an incident as RESOLVED in PostgreSQL.
+ *    - `handleRunContractDiff()`: Compares sample v1 vs v2 contracts for breaking changes.
+ *    - `handleRunMcpDiagnostic(toolName)`: Executes structured MCP diagnostic tools.
  * 
  * 4. How it communicates with other files:
  *    - Consumes unified API functions from `../services/api.js`.
  *    - Renders `Header`, `StatCard`, and pure CSS components.
  * 
  * 5. Why this chosen approach is appropriate:
- *    - Uses only standard React hooks (`useState`, `useEffect`, `useCallback`) without external state managers.
+ *    - Preserves compatibility with both single-dashboard diagnostics and multi-route navigation.
  *    - Completely resilient: graceful fallbacks ensure the UI never crashes if backend/database is offline.
  * 
  * 6. Telemetry & Diagnostic Flow:
@@ -41,6 +42,7 @@ import {
   checkHealth,
   checkDbHealth,
   getDashboardStats,
+  getDashboardAnalytics,
   getEndpoints,
   createEndpoint,
   probeEndpoint,
@@ -50,9 +52,10 @@ import {
   callMcpTool
 } from '../services/api';
 
-export default function Dashboard() {
-  // State: API statistics received from Express backend
+export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
+  // State: API statistics and analytics received from Express backend
   const [stats, setStats] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
 
   // State: registered endpoints and incidents from PostgreSQL
   const [endpoints, setEndpoints] = useState([]);
@@ -77,7 +80,7 @@ export default function Dashboard() {
 
   /**
    * Concurrently loads server health, database health, dashboard stats,
-   * live registered endpoints, and incident logs.
+   * analytics telemetry, live registered endpoints, and incident logs.
    */
   const loadDashboardData = useCallback(async () => {
     setIsLoading(true);
@@ -86,17 +89,24 @@ export default function Dashboard() {
     setDbStatus('checking');
 
     try {
-      const [healthResult, dbResult, statsResult, endpointsResult, incidentsResult] =
-        await Promise.allSettled([
-          checkHealth(),
-          checkDbHealth(),
-          getDashboardStats(),
-          getEndpoints(),
-          getIncidents()
-        ]);
+      const [
+        healthResult,
+        dbResult,
+        statsResult,
+        analyticsResult,
+        endpointsResult,
+        incidentsResult
+      ] = await Promise.allSettled([
+        checkHealth(),
+        checkDbHealth(),
+        getDashboardStats(),
+        getDashboardAnalytics(24),
+        getEndpoints(),
+        getIncidents()
+      ]);
 
       // 1. Process server health
-      if (healthResult.status === 'fulfilled' && healthResult.value.success) {
+      if (healthResult.status === 'fulfilled' && healthResult.value?.success) {
         setBackendStatus('online');
       } else {
         setBackendStatus('offline');
@@ -105,14 +115,14 @@ export default function Dashboard() {
       }
 
       // 2. Process database health
-      if (dbResult.status === 'fulfilled' && dbResult.value.success) {
+      if (dbResult.status === 'fulfilled' && dbResult.value?.success) {
         setDbStatus('online');
       } else {
         setDbStatus('offline');
       }
 
       // 3. Process statistics
-      if (statsResult.status === 'fulfilled' && statsResult.value.success) {
+      if (statsResult.status === 'fulfilled' && statsResult.value?.success) {
         setStats(statsResult.value.data);
         setDataSource(statsResult.value.dataSource || 'database');
       } else {
@@ -126,13 +136,18 @@ export default function Dashboard() {
         }
       }
 
-      // 4. Process live endpoints from database
-      if (endpointsResult.status === 'fulfilled' && endpointsResult.value.success) {
+      // 4. Process analytics
+      if (analyticsResult.status === 'fulfilled' && analyticsResult.value?.success) {
+        setAnalytics(analyticsResult.value.data);
+      }
+
+      // 5. Process live endpoints
+      if (endpointsResult.status === 'fulfilled' && endpointsResult.value?.success) {
         setEndpoints(endpointsResult.value.data || []);
       }
 
-      // 5. Process live incidents from database
-      if (incidentsResult.status === 'fulfilled' && incidentsResult.value.success) {
+      // 6. Process live incidents
+      if (incidentsResult.status === 'fulfilled' && incidentsResult.value?.success) {
         setIncidents(incidentsResult.value.data || []);
       }
     } catch (err) {
@@ -147,7 +162,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadDashboardData();
-  }, [loadDashboardData]);
+  }, [loadDashboardData, refreshKey]);
 
   /**
    * Executes active HTTP failure detection probe against an endpoint.
@@ -162,7 +177,7 @@ export default function Dashboard() {
           type: res.data.isHealthy ? 'success' : 'error',
           text: `Probe for '${name}': ${res.data.isHealthy ? 'HEALTHY' : 'FAILED'} (${res.data.statusCode || 'Timeout'}) in ${res.data.latency}`
         });
-        // Refresh metrics and incident list
+        // Refresh metrics, analytics, and incident list
         loadDashboardData();
       }
     } catch (err) {
@@ -176,7 +191,7 @@ export default function Dashboard() {
   };
 
   /**
-   * Seeds an initial demo endpoint in the database for instant testing.
+   * Seeds initial demo endpoints in the database for instant testing.
    */
   const handleSeedDemoEndpoint = async () => {
     try {
@@ -345,6 +360,8 @@ export default function Dashboard() {
 
   // Total checked calculation for accurate uptime %
   const totalChecked = (stats?.healthyApis || 0) + (stats?.failedApis || 0);
+  const series = analytics?.series || [];
+  const maxLatency = Math.max(...series.map((s) => s.latency || 100), 500);
 
   // Fallback sample items for initial zero-database preview
   const displayEndpoints = endpoints.length > 0 ? endpoints : [
@@ -431,21 +448,21 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Data Source Notice */}
-        <div className="demo-banner">
+        {/* Data Source & Worker Notice */}
+        <div className="demo-banner" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="demo-banner-content">
             <span className="demo-tag" style={dataSource === 'database' ? { backgroundColor: '#10b981' } : {}}>
               {dataSource ? `${dataSource.toUpperCase()} MODE` : 'DATABASE MODE'}
             </span>
             <p>
               {dataSource === 'database' ? (
-                <>Metrics computed live from <strong>PostgreSQL</strong> via Prisma ORM (<code>GET /api/dashboard/stats</code>).</>
+                <>Live metrics from <strong>PostgreSQL</strong> ({stats?.totalChecks || 0} probes logged).</>
               ) : (
-                <>All metrics below are delivered by Express (<code>GET /api/dashboard/stats</code>) for Day 1 foundation.</>
+                <>All metrics below are delivered by Express (<code>GET /api/dashboard/stats</code>).</>
               )}
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
             {endpoints.length === 0 && backendStatus === 'online' && (
               <button
                 className="btn-action"
@@ -454,6 +471,21 @@ export default function Dashboard() {
               >
                 + Seed Demo Endpoints
               </button>
+            )}
+            {stats?.workerOnline !== undefined && (
+              <span
+                style={{
+                  padding: '0.25rem 0.65rem',
+                  borderRadius: '9999px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  backgroundColor: stats.workerOnline ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                  color: stats.workerOnline ? '#34d399' : '#f87171',
+                  border: `1px solid ${stats.workerOnline ? '#10b981' : '#ef4444'}`,
+                }}
+              >
+                ● Docker Worker: {stats.workerOnline ? 'Active' : 'Offline'}
+              </span>
             )}
             <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>API Sentinel v1.0</span>
           </div>
@@ -487,8 +519,8 @@ export default function Dashboard() {
             icon="❌"
             colorVariant="red"
             subtitle={
-              stats?.failedApis > 0
-                ? 'Incidents flagged'
+              stats?.activeIncidents > 0
+                ? `${stats.activeIncidents} active incident(s)`
                 : totalChecked > 0
                 ? 'All clear'
                 : 'No checks yet'
@@ -500,13 +532,71 @@ export default function Dashboard() {
             value={stats?.averageLatency}
             icon="⚡"
             colorVariant="amber"
-            subtitle="Fleet response time"
+            subtitle={`P95: ${analytics?.percentiles?.p95 || 0} ms`}
             isLoading={isLoading}
           />
         </section>
 
+        {/* Fleet Latency Distribution & Percentiles Chart */}
+        <div className="panel-card" style={{ marginBottom: '1.5rem' }}>
+          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h2 className="panel-title" style={{ margin: 0 }}>
+              <span>📈</span> Latency Distribution (Last {series.length} Probes)
+            </h2>
+            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
+              <span style={{ color: '#94a3b8' }}>
+                P50: <strong style={{ color: '#38bdf8' }}>{analytics?.percentiles?.p50 || 0} ms</strong>
+              </span>
+              <span style={{ color: '#94a3b8' }}>
+                P95: <strong style={{ color: '#f59e0b' }}>{analytics?.percentiles?.p95 || 0} ms</strong>
+              </span>
+              <span style={{ color: '#94a3b8' }}>
+                P99: <strong style={{ color: '#f43f5e' }}>{analytics?.percentiles?.p99 || 0} ms</strong>
+              </span>
+              <span style={{ color: '#94a3b8' }}>
+                Error Rate: <strong style={{ color: (analytics?.errorRate || 0) > 0 ? '#f87171' : '#34d399' }}>{analytics?.errorRate || 0}%</strong>
+              </span>
+            </div>
+          </div>
+
+          {series.length === 0 ? (
+            <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8' }}>
+              No telemetry samples collected yet. Background worker probes will appear here.
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: '4px',
+                height: '120px',
+                padding: '1rem 0.5rem 0.5rem',
+                borderBottom: '1px solid #334155',
+              }}
+            >
+              {series.slice(-40).map((point) => {
+                const heightPct = Math.max(8, Math.round((point.latency / maxLatency) * 100));
+                return (
+                  <div
+                    key={point.id}
+                    title={`${point.endpointName} | HTTP ${point.statusCode || 'ERR'} | ${point.latency}ms (${new Date(point.checkedAt).toLocaleTimeString()})`}
+                    style={{
+                      flex: 1,
+                      height: `${heightPct}%`,
+                      backgroundColor: point.isHealthy ? '#10b981' : '#ef4444',
+                      borderRadius: '3px 3px 0 0',
+                      minWidth: '6px',
+                      opacity: 0.85,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Navigation Tabs for Diagnostics */}
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
           <button
             className={`btn-action ${activeTab === 'overview' ? 'btn-probe' : ''}`}
             onClick={() => setActiveTab('overview')}
@@ -540,9 +630,18 @@ export default function Dashboard() {
                 <h2 className="panel-title">
                   <span>🛡️</span> Monitored API Endpoints
                 </h2>
-                <span className="panel-badge">
-                  {endpoints.length > 0 ? `${endpoints.length} Live in PostgreSQL` : 'Illustrative Preview'}
-                </span>
+                {onNavigateToEndpoints ? (
+                  <button
+                    onClick={onNavigateToEndpoints}
+                    style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}
+                  >
+                    Manage Fleet ({endpoints.length}) ➔
+                  </button>
+                ) : (
+                  <span className="panel-badge">
+                    {endpoints.length > 0 ? `${endpoints.length} Live in PostgreSQL` : 'Illustrative Preview'}
+                  </span>
+                )}
               </div>
 
               <div className="table-container">
@@ -558,7 +657,7 @@ export default function Dashboard() {
                   </thead>
                   <tbody>
                     {displayEndpoints.map((ep) => {
-                      const latestCheck = ep.healthChecks && ep.healthChecks[0];
+                      const latestCheck = (ep.healthChecks && ep.healthChecks[0]) || ep.latestCheck;
                       const isHealthy = latestCheck ? latestCheck.isHealthy : null;
                       const latencyStr = latestCheck ? `${latestCheck.latency} ms` : '—';
 
@@ -597,38 +696,78 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Section 2: Recent Incident Audit Trail */}
-            <div className="panel-card">
-              <div className="panel-header">
-                <h2 className="panel-title">
-                  <span>🚨</span> Operational Incidents
-                </h2>
-                <span className="panel-badge">Failure Log</span>
+            {/* Section 2: Recent Incident Audit Trail & Recent Telemetry */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              
+              {/* Incident Management */}
+              <div className="panel-card">
+                <div className="panel-header">
+                  <h2 className="panel-title">
+                    <span>🚨</span> Operational Incidents
+                  </h2>
+                  <span className="panel-badge">Failure Log</span>
+                </div>
+
+                <div className="activity-list">
+                  {displayIncidents.map((act) => (
+                    <div key={act.id} className="activity-item">
+                      <div className={`activity-icon-bullet ${act.status === 'OPEN' ? 'bullet-red' : 'bullet-green'}`} />
+                      <div style={{ flex: 1 }}>
+                        <div className="activity-text">
+                          <strong>{act.title}</strong>
+                          <div>{act.endpoint?.name || 'External API'} — Status: <code>{act.status}</code></div>
+                        </div>
+                        <div className="activity-time">{new Date(act.createdAt).toLocaleString()}</div>
+                      </div>
+                      {act.status === 'OPEN' && !act.isMock && (
+                        <button
+                          className="btn-action btn-resolve"
+                          onClick={() => handleResolveIncident(act.id)}
+                          title="Mark incident as resolved in database"
+                        >
+                          ✓ Resolve
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div className="activity-list">
-                {displayIncidents.map((act) => (
-                  <div key={act.id} className="activity-item">
-                    <div className={`activity-icon-bullet ${act.status === 'OPEN' ? 'bullet-red' : 'bullet-green'}`} />
-                    <div style={{ flex: 1 }}>
-                      <div className="activity-text">
-                        <strong>{act.title}</strong>
-                        <div>{act.endpoint?.name || 'External API'} — Status: <code>{act.status}</code></div>
-                      </div>
-                      <div className="activity-time">{new Date(act.createdAt).toLocaleString()}</div>
-                    </div>
-                    {act.status === 'OPEN' && !act.isMock && (
-                      <button
-                        className="btn-action btn-resolve"
-                        onClick={() => handleResolveIncident(act.id)}
-                        title="Mark incident as resolved in database"
-                      >
-                        ✓ Resolve
-                      </button>
-                    )}
+              {/* Recent Probes from origin/main */}
+              {endpoints.some((ep) => ep.latestCheck) && (
+                <div className="panel-card">
+                  <div className="panel-header">
+                    <h2 className="panel-title">
+                      <span>📋</span> Recent Probe Activity
+                    </h2>
+                    <span className="panel-badge">Live Telemetry</span>
                   </div>
-                ))}
-              </div>
+                  <div className="activity-list">
+                    {endpoints
+                      .filter((ep) => ep.latestCheck)
+                      .slice(0, 4)
+                      .map((ep) => (
+                        <div key={ep.id} className="activity-item">
+                          <div className={`activity-icon-bullet ${ep.latestCheck.isHealthy ? 'bullet-green' : 'bullet-red'}`} />
+                          <div>
+                            <div className="activity-text">
+                              <strong>{ep.name}</strong>
+                              <div>
+                                {ep.latestCheck.isHealthy
+                                  ? `HTTP ${ep.latestCheck.statusCode} verified in ${ep.latestCheck.latency} ms`
+                                  : ep.latestCheck.errorMessage || `HTTP ${ep.latestCheck.statusCode || 'ERR'} failed`}
+                              </div>
+                            </div>
+                            <div className="activity-time">
+                              {new Date(ep.latestCheck.checkedAt).toLocaleTimeString()}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
             </div>
 
           </section>
@@ -662,7 +801,7 @@ export default function Dashboard() {
                   <div style={{ color: 'var(--status-error)' }}>Error: {diffReport.error}</div>
                 ) : (
                   <div>
-                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
                       <span className={diffReport.isBreaking ? 'tag-breaking' : 'tag-safe'}>
                         {diffReport.isBreaking ? '⚠️ BREAKING CHANGES DETECTED' : '✅ CONTRACT COMPATIBLE'}
                       </span>

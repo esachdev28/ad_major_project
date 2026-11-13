@@ -47,7 +47,13 @@ const endpointRoutes = require('./routes/endpointRoutes');
 const incidentRoutes = require('./routes/incidentRoutes');
 const versionRoutes = require('./routes/versionRoutes');
 const integrationRoutes = require('./routes/integrationRoutes');
+const contractRoutes = require('./routes/contractRoutes');
+const dependencyRoutes = require('./routes/dependencyRoutes');
 const mcpRoutes = require('./routes/mcpRoutes');
+const diagnosticsRoutes = require('./routes/diagnosticsRoutes');
+const authRoutes = require('./routes/authRoutes');
+const orgRoutes = require('./routes/orgRoutes');
+const { apiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -80,14 +86,22 @@ app.use(express.static(distPath));
 // API Route Mounts
 // ==========================================
 
+// Global API rate limiting (Phase 13 Security Hardening)
+app.use('/api', apiLimiter);
+
 // Mount dedicated API routers
+app.use('/api/auth', authRoutes);
+app.use('/api/organizations', orgRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/endpoints', endpointRoutes);
 app.use('/api/incidents', incidentRoutes);
 app.use('/api/versions', versionRoutes);
 app.use('/api/integrations', integrationRoutes);
+app.use('/api/contracts', contractRoutes);
+app.use('/api/dependencies', dependencyRoutes);
 app.use('/api/mcp', mcpRoutes);
+app.use('/api/diagnostics', diagnosticsRoutes);
 
 // Fallback for unmatched /api requests (returns clean JSON 404)
 app.use('/api', (req, res) => {
@@ -127,6 +141,9 @@ app.get('*', (req, res) => {
 
 // Centralized error-handling middleware
 app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && Object.hasOwn(err, 'body')) {
+    return res.status(400).json({ success: false, message: 'Request body contains invalid JSON.' });
+  }
   console.error('Unhandled server error:', err.stack || err.message);
   res.status(500).json({
     success: false,
@@ -156,20 +173,22 @@ process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 // ==========================================
 // Start Server
 // ==========================================
-app.listen(PORT, () => {
-  console.log(`===============================================`);
-  console.log(`🛡️  API Sentinel Unified Server with PostgreSQL & Prisma`);
-  console.log(`🚀 Unified Web & API Server: http://localhost:${PORT}`);
-  console.log(`🩺 Server Health check:     http://localhost:${PORT}/api/health`);
-  console.log(`🗄️  Database Health check:   http://localhost:${PORT}/api/health/db`);
-  console.log(`📊 Dashboard stats endpoint: http://localhost:${PORT}/api/dashboard/stats`);
-  console.log(`🌐 Endpoints & Probing:      http://localhost:${PORT}/api/endpoints`);
-  console.log(`🚨 Incidents audit log:      http://localhost:${PORT}/api/incidents`);
-  console.log(`📐 Versioning & Diff Engine: http://localhost:${PORT}/api/versions`);
-  console.log(`🔗 Consumer Integrations:    http://localhost:${PORT}/api/integrations`);
-  console.log(`🤖 MCP Diagnostic Server:    http://localhost:${PORT}/api/mcp/tools`);
-  console.log(`===============================================`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`===============================================`);
+    console.log(`🛡️  API Sentinel Unified Server with PostgreSQL & Prisma`);
+    console.log(`🚀 Unified Web & API Server: http://localhost:${PORT}`);
+    console.log(`🩺 Server Health check:     http://localhost:${PORT}/api/health`);
+    console.log(`🗄️  Database Health check:   http://localhost:${PORT}/api/health/db`);
+    console.log(`📊 Dashboard stats endpoint: http://localhost:${PORT}/api/dashboard/stats`);
+    console.log(`🌐 Endpoints & Probing:      http://localhost:${PORT}/api/endpoints`);
+    console.log(`🚨 Incidents audit log:      http://localhost:${PORT}/api/incidents`);
+    console.log(`📐 Versioning & Diff Engine: http://localhost:${PORT}/api/versions`);
+    console.log(`🔗 Consumer Integrations:    http://localhost:${PORT}/api/integrations`);
+    console.log(`🤖 MCP Diagnostic Server:    http://localhost:${PORT}/api/mcp/tools`);
+    console.log(`===============================================`);
+  });
+}
 
 // Export app for testing purposes
 module.exports = app;

@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "api_endpoints" ADD COLUMN     "expectedStatus" INTEGER NOT NULL DEFAULT 200,
+ADD COLUMN     "headers" TEXT,
+ADD COLUMN     "interval" INTEGER NOT NULL DEFAULT 60,
+ADD COLUMN     "isActive" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN     "timeout" INTEGER NOT NULL DEFAULT 5000;

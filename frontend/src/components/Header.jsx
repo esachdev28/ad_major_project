@@ -26,7 +26,7 @@
 
 import React from 'react';
 
-export default function Header({ backendStatus = 'checking', onRefresh, isRefreshing = false }) {
+export default function Header({ backendStatus = 'checking', onRefresh, isRefreshing = false, title = 'Sentinel Dashboard', subtitle = 'Real-time API monitoring, health metrics, and contract observability' }) {
   // Determine badge text and CSS class based on backend connectivity
   const statusLabel =
     backendStatus === 'online'
@@ -39,8 +39,8 @@ export default function Header({ backendStatus = 'checking', onRefresh, isRefres
     <header className="header-container">
       {/* Title & Welcome */}
       <div className="header-left">
-        <h1>Sentinel Dashboard</h1>
-        <p>Real-time API monitoring, health metrics, and contract observability</p>
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
       </div>
 
       {/* Connectivity Indicator and Refresh Action */}
