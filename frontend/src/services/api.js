@@ -38,17 +38,24 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
  * Handles the scenario where the Express server is not running at all.
  *
  * @param {string} endpoint - The path to fetch (e.g. '/api/health')
+ * @param {RequestInit} [options={}] - Standard fetch options (method, headers, body)
  * @returns {Promise<any>} - Parsed JSON response
  */
-async function apiRequest(endpoint) {
+async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
+
+  const defaultHeaders = {
+    'Content-Type': 'application/json',
+  };
 
   try {
     const response = await fetch(url, {
-      method: 'GET',
+      method: options.method || 'GET',
       headers: {
-        'Content-Type': 'application/json',
+        ...defaultHeaders,
+        ...(options.headers || {})
       },
+      body: options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : undefined
     });
 
     if (!response.ok) {
@@ -106,6 +113,103 @@ export async function checkDbHealth() {
  */
 export async function getDashboardStats() {
   return await apiRequest('/api/dashboard/stats');
+}
+
+/**
+ * Endpoints API: Lists all registered endpoints with latest check and open incident status
+ * Calls: GET /api/endpoints
+ */
+export async function getEndpoints() {
+  return await apiRequest('/api/endpoints');
+}
+
+/**
+ * Endpoints API: Registers a new endpoint for monitoring
+ * Calls: POST /api/endpoints
+ */
+export async function createEndpoint(endpointData) {
+  return await apiRequest('/api/endpoints', {
+    method: 'POST',
+    body: endpointData
+  });
+}
+
+/**
+ * Endpoints API: Executes active failure detection probe on an endpoint
+ * Calls: POST /api/endpoints/:id/probe
+ */
+export async function probeEndpoint(id) {
+  return await apiRequest(`/api/endpoints/${id}/probe`, {
+    method: 'POST'
+  });
+}
+
+/**
+ * Endpoints API: Deletes an endpoint
+ * Calls: DELETE /api/endpoints/:id
+ */
+export async function deleteEndpoint(id) {
+  return await apiRequest(`/api/endpoints/${id}`, {
+    method: 'DELETE'
+  });
+}
+
+/**
+ * Incidents API: Lists operational incidents
+ * Calls: GET /api/incidents
+ */
+export async function getIncidents(status = '') {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  return await apiRequest(`/api/incidents${query}`);
+}
+
+/**
+ * Incidents API: Updates incident status (e.g. RESOLVED)
+ * Calls: PATCH /api/incidents/:id
+ */
+export async function updateIncidentStatus(id, status) {
+  return await apiRequest(`/api/incidents/${id}`, {
+    method: 'PATCH',
+    body: { status }
+  });
+}
+
+/**
+ * Breaking-Change Engine: Compares two OpenAPI specs for breaking changes
+ * Calls: POST /api/versions/diff
+ */
+export async function diffSpecifications(diffPayload) {
+  return await apiRequest('/api/versions/diff', {
+    method: 'POST',
+    body: diffPayload
+  });
+}
+
+/**
+ * Impact Assessment Engine: Computes blast radius and lists affected consumers
+ * Calls: GET /api/integrations/impact/:endpointId
+ */
+export async function getImpactAssessment(endpointId) {
+  return await apiRequest(`/api/integrations/impact/${endpointId}`);
+}
+
+/**
+ * MCP Diagnostics: Lists available tools
+ * Calls: GET /api/mcp/tools
+ */
+export async function getMcpTools() {
+  return await apiRequest('/api/mcp/tools');
+}
+
+/**
+ * MCP Diagnostics: Invokes an MCP diagnostic tool
+ * Calls: POST /api/mcp/tools/call
+ */
+export async function callMcpTool(name, args = {}) {
+  return await apiRequest('/api/mcp/tools/call', {
+    method: 'POST',
+    body: { name, arguments: args }
+  });
 }
 
 export { API_BASE_URL };
