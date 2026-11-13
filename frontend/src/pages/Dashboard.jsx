@@ -1,70 +1,86 @@
 /**
- * Dashboard.jsx
+ * Dashboard.jsx - API Sentinel Central Observability & Diagnostics Dashboard
  * 
  * 1. Why this file exists:
- *    The central page component for API Sentinel Day 1. It orchestrates data fetching,
- *    manages local state (loading, error, statistics, connection status), and arranges
- *    the visual sections of the dashboard.
+ *    The central UI controller for API Sentinel. It orchestrates system health telemetry,
+ *    live HTTP failure probing, incident tracking, contract breaking-change analysis,
+ *    and Model Context Protocol (MCP) diagnostic tools within a responsive interface.
  * 
  * 2. What its responsibilities are:
- *    - Fetch backend health via `checkHealth()`, database health via `checkDbHealth()`,
- *      and statistics via `getDashboardStats()` on component mount using React's `useEffect` hook.
- *    - Maintain React state for:
- *      * `stats`: The 4 core metrics (Total APIs, Healthy APIs, Failed APIs, Average Latency).
- *      * `backendStatus`: 'checking' | 'online' | 'offline'.
- *      * `dbStatus`: 'checking' | 'online' | 'offline'.
- *      * `dataSource`: Tag confirming data source (e.g. 'database').
- *      * `isLoading`: Boolean indicator for network requests.
- *      * `error`: Error message string if backend or database communication fails.
- *    - Render the dashboard header, demo notice, 4 StatCards, API Health Overview table,
- *      and Recent Activity feed.
- *    - Ensure the UI NEVER crashes if the Express backend is offline.
+ *    - Monitor and display server, database, and fleet telemetry metrics.
+ *    - Display fleet latency distribution and percentile curves (P50, P95, P99).
+ *    - Execute on-demand active HTTP health probes against registered endpoints.
+ *    - Display and resolve operational incidents in real-time.
+ *    - Provide an interactive Breaking-Change Diff analyzer between OpenAPI versions.
+ *    - Provide an MCP Diagnostic Tool runner for AI-assisted incident root-cause analysis.
  * 
  * 3. Which functions/components it contains:
  *    - `Dashboard()`: Main React page component.
- *    - `loadDashboardData()`: Asynchronous coordinator that fetches data from `api.js`.
+ *    - `loadDashboardData()`: Concurrently loads health, stats, analytics, endpoints, incidents.
+ *    - `handleProbe(endpointId)`: Triggers active failure detection probe.
+ *    - `handleResolveIncident(id)`: Marks an incident as RESOLVED in PostgreSQL.
+ *    - `handleRunContractDiff()`: Compares sample v1 vs v2 contracts for breaking changes.
+ *    - `handleRunMcpDiagnostic(toolName)`: Executes structured MCP diagnostic tools.
  * 
  * 4. How it communicates with other files:
- *    - Calls API functions from `../services/api.js`.
- *    - Imports and renders `Header`, `StatCard`, and layout components.
- *    - Exported and rendered inside `App.jsx`.
+ *    - Consumes unified API functions from `../services/api.js`.
+ *    - Renders `Header`, `StatCard`, and pure CSS components.
  * 
  * 5. Why this chosen approach is appropriate:
- *    - Standard React idioms (`useState`, `useEffect`) without third-party state managers (Redux).
- *    - Graceful error boundary behavior: displays clear actionable alerts instead of white-screens.
- *    - Beginner-friendly, perfectly suitable for viva examination explanation.
+ *    - Preserves compatibility with both single-dashboard diagnostics and multi-route navigation.
+ *    - Completely resilient: graceful fallbacks ensure the UI never crashes if backend/database is offline.
+ * 
+ * 6. Telemetry & Diagnostic Flow:
+ *    React UI -> api.js -> Express Routes (endpoints/incidents/versions/mcp) -> Prisma Client
+ *    -> PostgreSQL -> Express Response -> React State Update.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
-import { checkHealth, checkDbHealth, getDashboardStats, getDashboardAnalytics, getEndpoints } from '../services/api';
+import {
+  checkHealth,
+  checkDbHealth,
+  getDashboardStats,
+  getDashboardAnalytics,
+  getEndpoints,
+  createEndpoint,
+  probeEndpoint,
+  getIncidents,
+  updateIncidentStatus,
+  diffSpecifications,
+  callMcpTool
+} from '../services/api';
 
 export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
-  // State: API statistics received from Express backend
+  // State: API statistics and analytics received from Express backend
   const [stats, setStats] = useState(null);
   const [analytics, setAnalytics] = useState(null);
+
+  // State: registered endpoints and incidents from PostgreSQL
   const [endpoints, setEndpoints] = useState([]);
+  const [incidents, setIncidents] = useState([]);
 
-  // State: backend health and connectivity ('checking' | 'online' | 'offline')
+  // State: connection indicators ('checking' | 'online' | 'offline')
   const [backendStatus, setBackendStatus] = useState('checking');
-
-  // State: database connectivity ('checking' | 'online' | 'offline')
   const [dbStatus, setDbStatus] = useState('checking');
-
-  // State: meta information about data source (from Express)
   const [dataSource, setDataSource] = useState('');
-
-  // State: loading indicator
   const [isLoading, setIsLoading] = useState(true);
-
-  // State: friendly error message if backend or database is unreachable
   const [error, setError] = useState(null);
 
+  // State: active row operation spinners
+  const [probingId, setProbingId] = useState(null);
+  const [actionNotice, setActionNotice] = useState(null);
+
+  // State: active diagnostic panel ('overview' | 'diff' | 'mcp')
+  const [activeTab, setActiveTab] = useState('overview');
+  const [diffReport, setDiffReport] = useState(null);
+  const [mcpReport, setMcpReport] = useState(null);
+  const [isDiagnosticRunning, setIsDiagnosticRunning] = useState(false);
+
   /**
-   * Fetches health and dashboard metrics from the Express backend.
-   * Uses Promise.allSettled to ensure that even if one endpoint fails,
-   * we capture partial availability without throwing unhandled exceptions.
+   * Concurrently loads server health, database health, dashboard stats,
+   * analytics telemetry, live registered endpoints, and incident logs.
    */
   const loadDashboardData = useCallback(async () => {
     setIsLoading(true);
@@ -73,17 +89,24 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
     setDbStatus('checking');
 
     try {
-      // Execute health check, db check, stats, analytics, and endpoints fetch concurrently
-      const [healthResult, dbResult, statsResult, analyticsResult, endpointsResult] = await Promise.allSettled([
+      const [
+        healthResult,
+        dbResult,
+        statsResult,
+        analyticsResult,
+        endpointsResult,
+        incidentsResult
+      ] = await Promise.allSettled([
         checkHealth(),
         checkDbHealth(),
         getDashboardStats(),
         getDashboardAnalytics(24),
         getEndpoints(),
+        getIncidents()
       ]);
 
-      // 1. Process server health check result
-      if (healthResult.status === 'fulfilled' && healthResult.value.success) {
+      // 1. Process server health
+      if (healthResult.status === 'fulfilled' && healthResult.value?.success) {
         setBackendStatus('online');
       } else {
         setBackendStatus('offline');
@@ -91,21 +114,20 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
         setError(reason);
       }
 
-      // 2. Process database health check result
-      if (dbResult.status === 'fulfilled' && dbResult.value.success) {
+      // 2. Process database health
+      if (dbResult.status === 'fulfilled' && dbResult.value?.success) {
         setDbStatus('online');
       } else {
         setDbStatus('offline');
       }
 
-      // 3. Process statistics result
-      if (statsResult.status === 'fulfilled' && statsResult.value.success) {
+      // 3. Process statistics
+      if (statsResult.status === 'fulfilled' && statsResult.value?.success) {
         setStats(statsResult.value.data);
         setDataSource(statsResult.value.dataSource || 'database');
       } else {
         setStats(null);
         if (healthResult.status === 'fulfilled') {
-          // Express server is online, but database query or connectivity failed
           const reason =
             statsResult.reason?.message ||
             dbResult.reason?.message ||
@@ -115,13 +137,18 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
       }
 
       // 4. Process analytics
-      if (analyticsResult.status === 'fulfilled' && analyticsResult.value.success) {
+      if (analyticsResult.status === 'fulfilled' && analyticsResult.value?.success) {
         setAnalytics(analyticsResult.value.data);
       }
 
-      // 5. Process registered endpoints
-      if (endpointsResult.status === 'fulfilled' && endpointsResult.value.success) {
+      // 5. Process live endpoints
+      if (endpointsResult.status === 'fulfilled' && endpointsResult.value?.success) {
         setEndpoints(endpointsResult.value.data || []);
+      }
+
+      // 6. Process live incidents
+      if (incidentsResult.status === 'fulfilled' && incidentsResult.value?.success) {
+        setIncidents(incidentsResult.value.data || []);
       }
     } catch (err) {
       setBackendStatus('offline');
@@ -133,15 +160,221 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
     }
   }, []);
 
-  // Fetch data on initial mount
   useEffect(() => {
     loadDashboardData();
   }, [loadDashboardData, refreshKey]);
 
-  // Total number of endpoints that have been checked at least once
+  /**
+   * Executes active HTTP failure detection probe against an endpoint.
+   */
+  const handleProbe = async (id, name) => {
+    setProbingId(id);
+    setActionNotice(null);
+    try {
+      const res = await probeEndpoint(id);
+      if (res.success) {
+        setActionNotice({
+          type: res.data.isHealthy ? 'success' : 'error',
+          text: `Probe for '${name}': ${res.data.isHealthy ? 'HEALTHY' : 'FAILED'} (${res.data.statusCode || 'Timeout'}) in ${res.data.latency}`
+        });
+        // Refresh metrics, analytics, and incident list
+        loadDashboardData();
+      }
+    } catch (err) {
+      setActionNotice({
+        type: 'error',
+        text: `Probe error for '${name}': ${err.message}`
+      });
+    } finally {
+      setProbingId(null);
+    }
+  };
+
+  /**
+   * Seeds initial demo endpoints in the database for instant testing.
+   */
+  const handleSeedDemoEndpoint = async () => {
+    try {
+      setIsLoading(true);
+      await createEndpoint({
+        name: 'User Service API',
+        url: 'https://jsonplaceholder.typicode.com/users',
+        method: 'GET',
+        description: 'Core microservice managing user identities and profiles'
+      });
+      await createEndpoint({
+        name: 'Payment Gateway (Simulated Failure)',
+        url: 'https://httpstat.us/504',
+        method: 'POST',
+        description: 'External payment processing gateway'
+      });
+      loadDashboardData();
+      setActionNotice({
+        type: 'success',
+        text: 'Registered demo endpoints into PostgreSQL successfully!'
+      });
+    } catch (err) {
+      setActionNotice({
+        type: 'error',
+        text: `Failed to register demo endpoints: ${err.message}`
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Resolves an open operational incident.
+   */
+  const handleResolveIncident = async (id) => {
+    try {
+      await updateIncidentStatus(id, 'RESOLVED');
+      loadDashboardData();
+      setActionNotice({
+        type: 'success',
+        text: 'Incident marked as RESOLVED in PostgreSQL.'
+      });
+    } catch (err) {
+      setActionNotice({
+        type: 'error',
+        text: `Failed to resolve incident: ${err.message}`
+      });
+    }
+  };
+
+  /**
+   * Demonstrates the Breaking-Change Analysis Engine between two OpenAPI contract versions.
+   */
+  const handleRunContractDiff = async () => {
+    setIsDiagnosticRunning(true);
+    setDiffReport(null);
+
+    // Sample v1: Initial stable specification
+    const v1Spec = {
+      openapi: '3.0.0',
+      info: { title: 'Order API', version: '1.0.0' },
+      paths: {
+        '/api/v1/orders': {
+          get: {
+            parameters: [
+              { name: 'customerId', in: 'query', required: true, schema: { type: 'string' } }
+            ],
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        orderId: { type: 'string' },
+                        amount: { type: 'number' },
+                        status: { type: 'string' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          delete: {
+            parameters: [{ name: 'orderId', in: 'path', required: true }]
+          }
+        }
+      }
+    };
+
+    // Sample v2: Evolution containing 3 breaking changes:
+    // 1. DELETE operation removed
+    // 2. amount changed from number to string (incompatible type)
+    // 3. Newly required query parameter 'merchantToken'
+    const v2Spec = {
+      openapi: '3.0.0',
+      info: { title: 'Order API', version: '2.0.0' },
+      paths: {
+        '/api/v1/orders': {
+          get: {
+            parameters: [
+              { name: 'customerId', in: 'query', required: true, schema: { type: 'string' } },
+              { name: 'merchantToken', in: 'query', required: true, schema: { type: 'string' } }
+            ],
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        orderId: { type: 'string' },
+                        amount: { type: 'string' }, // Incompatible type modification
+                        status: { type: 'string' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          // DELETE /api/v1/orders removed
+        }
+      }
+    };
+
+    try {
+      const res = await diffSpecifications({ oldSpec: v1Spec, newSpec: v2Spec });
+      setDiffReport(res.data);
+    } catch (err) {
+      setDiffReport({ error: err.message });
+    } finally {
+      setIsDiagnosticRunning(false);
+    }
+  };
+
+  /**
+   * Demonstrates the MCP Diagnostic Server invoking AI-assisted tools.
+   */
+  const handleRunMcpDiagnostic = async (toolName) => {
+    setIsDiagnosticRunning(true);
+    setMcpReport(null);
+
+    try {
+      let args = {};
+      if (toolName === 'inspect_incidents') {
+        args = { status: 'ALL' };
+      } else if (toolName === 'investigate_impact' || toolName === 'get_endpoint_health') {
+        const targetEp = endpoints[0];
+        if (targetEp) {
+          args = { endpointId: targetEp.id };
+        } else {
+          throw new Error('Please register or seed an endpoint first to run this diagnostic.');
+        }
+      }
+
+      const res = await callMcpTool(toolName, args);
+      setMcpReport(res.data);
+    } catch (err) {
+      setMcpReport({ error: err.message });
+    } finally {
+      setIsDiagnosticRunning(false);
+    }
+  };
+
+  // Total checked calculation for accurate uptime %
   const totalChecked = (stats?.healthyApis || 0) + (stats?.failedApis || 0);
   const series = analytics?.series || [];
   const maxLatency = Math.max(...series.map((s) => s.latency || 100), 500);
+
+  // Fallback sample items for initial zero-database preview
+  const displayEndpoints = endpoints.length > 0 ? endpoints : [
+    { id: 'mock-1', method: 'GET', url: 'https://api.sentinel.dev/v1/users', name: 'User Service', isMock: true, healthChecks: [{ isHealthy: true, latency: 42 }] },
+    { id: 'mock-2', method: 'POST', url: 'https://api.sentinel.dev/v1/auth', name: 'Auth Gateway', isMock: true, healthChecks: [{ isHealthy: true, latency: 118 }] },
+    { id: 'mock-3', method: 'GET', url: 'https://api.sentinel.dev/v1/orders', name: 'Order Service', isMock: true, healthChecks: [{ isHealthy: true, latency: 85 }] },
+    { id: 'mock-4', method: 'POST', url: 'https://api.sentinel.dev/v1/payments', name: 'Payment Core', isMock: true, healthChecks: [{ isHealthy: false, latency: 1420 }] }
+  ];
+
+  const displayIncidents = incidents.length > 0 ? incidents : [
+    { id: 'inc-1', title: 'HTTP 504 Gateway Timeout', status: 'OPEN', createdAt: new Date().toISOString(), endpoint: { name: 'Payment Core' }, isMock: true },
+    { id: 'inc-2', title: 'Latency anomaly detected (>1200ms)', status: 'RESOLVED', createdAt: new Date(Date.now() - 3600000).toISOString(), endpoint: { name: 'Warehouse API' }, isMock: true }
+  ];
 
   return (
     <div className="main-wrapper">
@@ -155,7 +388,7 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
       {/* Main Content Area */}
       <div className="dashboard-content">
 
-        {/* Backend Unavailability Alert (Displays if Express is not running) */}
+        {/* Backend Offline Alert */}
         {backendStatus === 'offline' && (
           <div className="backend-alert">
             <span style={{ fontSize: '1.5rem' }}>⚠️</span>
@@ -172,15 +405,15 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
           </div>
         )}
 
-        {/* Database Unavailability Alert (Displays if Express is running but PostgreSQL failed) */}
+        {/* Database Notice */}
         {backendStatus === 'online' && (dbStatus === 'offline' || error) && (
           <div className="backend-alert" style={{ borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)' }}>
             <span style={{ fontSize: '1.5rem' }}>⚠️</span>
             <div>
-              <h4 style={{ color: '#f59e0b' }}>Database Connection Notice</h4>
+              <h4 style={{ color: '#f59e0b' }}>Database Notice</h4>
               <p>
                 {error || 'Could not connect to PostgreSQL database via Prisma.'}
-                {' '}Make sure PostgreSQL is running on port 5432 and migrations have been executed:
+                {' '}Ensure PostgreSQL is running on port 5432:
               </p>
               <p style={{ marginTop: '0.4rem' }}>
                 <code>cd backend && npx prisma migrate dev</code>
@@ -189,8 +422,34 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
           </div>
         )}
 
+        {/* Dynamic Action Notification Toast */}
+        {actionNotice && (
+          <div
+            className="backend-alert"
+            style={{
+              borderColor: actionNotice.type === 'success' ? '#10b981' : '#ef4444',
+              backgroundColor: actionNotice.type === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              marginBottom: '1rem'
+            }}
+          >
+            <span style={{ fontSize: '1.2rem' }}>{actionNotice.type === 'success' ? '✅' : '❌'}</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ color: actionNotice.type === 'success' ? '#10b981' : '#ef4444', fontWeight: 600 }}>
+                {actionNotice.text}
+              </p>
+            </div>
+            <button
+              className="btn-action"
+              onClick={() => setActionNotice(null)}
+              style={{ padding: '2px 8px' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Data Source & Worker Notice */}
-        <div className="demo-banner" style={{ justifyContent: 'space-between' }}>
+        <div className="demo-banner" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="demo-banner-content">
             <span className="demo-tag" style={dataSource === 'database' ? { backgroundColor: '#10b981' } : {}}>
               {dataSource ? `${dataSource.toUpperCase()} MODE` : 'DATABASE MODE'}
@@ -203,19 +462,33 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
               )}
             </p>
           </div>
-          <span
-            style={{
-              padding: '0.25rem 0.65rem',
-              borderRadius: '9999px',
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              backgroundColor: stats?.workerOnline ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-              color: stats?.workerOnline ? '#34d399' : '#f87171',
-              border: `1px solid ${stats?.workerOnline ? '#10b981' : '#ef4444'}`,
-            }}
-          >
-            ● Docker Worker: {stats?.workerOnline ? 'Active' : 'Offline'}
-          </span>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {endpoints.length === 0 && backendStatus === 'online' && (
+              <button
+                className="btn-action"
+                onClick={handleSeedDemoEndpoint}
+                title="Populate PostgreSQL with live sample endpoints to test probing"
+              >
+                + Seed Demo Endpoints
+              </button>
+            )}
+            {stats?.workerOnline !== undefined && (
+              <span
+                style={{
+                  padding: '0.25rem 0.65rem',
+                  borderRadius: '9999px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  backgroundColor: stats.workerOnline ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                  color: stats.workerOnline ? '#34d399' : '#f87171',
+                  border: `1px solid ${stats.workerOnline ? '#10b981' : '#ef4444'}`,
+                }}
+              >
+                ● Docker Worker: {stats.workerOnline ? 'Active' : 'Offline'}
+              </span>
+            )}
+            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>API Sentinel v1.0</span>
+          </div>
         </div>
 
         {/* 4 Core Quantitative Statistics Cards */}
@@ -270,7 +543,7 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
             <h2 className="panel-title" style={{ margin: 0 }}>
               <span>📈</span> Latency Distribution (Last {series.length} Probes)
             </h2>
-            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
               <span style={{ color: '#94a3b8' }}>
                 P50: <strong style={{ color: '#38bdf8' }}>{analytics?.percentiles?.p50 || 0} ms</strong>
               </span>
@@ -322,111 +595,293 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
           )}
         </div>
 
-        {/* Detailed Sections: API Health Overview & Recent Activity */}
-        <section className="dashboard-sections-grid">
-          
-          {/* Section 1: API Health Overview */}
-          <div className="panel-card">
-            <div className="panel-header">
-              <h2 className="panel-title">
-                <span>🛡️</span> API Health Overview
-              </h2>
-              {onNavigateToEndpoints ? (
-                <button
-                  onClick={onNavigateToEndpoints}
-                  style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}
-                >
-                  Manage Fleet ({endpoints.length}) ➔
-                </button>
-              ) : (
-                <span className="panel-badge">Database-Backed</span>
-              )}
-            </div>
+        {/* Navigation Tabs for Diagnostics */}
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <button
+            className={`btn-action ${activeTab === 'overview' ? 'btn-probe' : ''}`}
+            onClick={() => setActiveTab('overview')}
+            style={{ fontWeight: activeTab === 'overview' ? 700 : 500 }}
+          >
+            🛡️ Observability Overview
+          </button>
+          <button
+            className={`btn-action ${activeTab === 'diff' ? 'btn-probe' : ''}`}
+            onClick={() => setActiveTab('diff')}
+            style={{ fontWeight: activeTab === 'diff' ? 700 : 500 }}
+          >
+            📐 Breaking-Change Diff Engine
+          </button>
+          <button
+            className={`btn-action ${activeTab === 'mcp' ? 'btn-probe' : ''}`}
+            onClick={() => setActiveTab('mcp')}
+            style={{ fontWeight: activeTab === 'mcp' ? 700 : 500 }}
+          >
+            🤖 MCP Diagnostic Tools
+          </button>
+        </div>
 
-            <div className="table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Method</th>
-                    <th>Endpoint</th>
-                    <th>Uptime</th>
-                    <th>Latency</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {endpoints.length === 0 ? (
-                    <tr><td colSpan="5">No API endpoints registered yet.</td></tr>
-                  ) : (
-                    endpoints.slice(0, 5).map((ep) => {
-                      const check = ep.latestCheck;
-                      const statusText = check ? (check.isHealthy ? 'Healthy' : 'Failed') : 'Pending';
-                      const statusClass = check ? (check.isHealthy ? 'healthy' : 'failed') : '';
+        {/* TAB 1: Core Observability Overview */}
+        {activeTab === 'overview' && (
+          <section className="dashboard-sections-grid">
+            
+            {/* Section 1: API Health Overview & Live Probing */}
+            <div className="panel-card">
+              <div className="panel-header">
+                <h2 className="panel-title">
+                  <span>🛡️</span> Monitored API Endpoints
+                </h2>
+                {onNavigateToEndpoints ? (
+                  <button
+                    onClick={onNavigateToEndpoints}
+                    style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500 }}
+                  >
+                    Manage Fleet ({endpoints.length}) ➔
+                  </button>
+                ) : (
+                  <span className="panel-badge">
+                    {endpoints.length > 0 ? `${endpoints.length} Live in PostgreSQL` : 'Illustrative Preview'}
+                  </span>
+                )}
+              </div>
+
+              <div className="table-container">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Method</th>
+                      <th>Service & Path</th>
+                      <th>Latency</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayEndpoints.map((ep) => {
+                      const latestCheck = (ep.healthChecks && ep.healthChecks[0]) || ep.latestCheck;
+                      const isHealthy = latestCheck ? latestCheck.isHealthy : null;
+                      const latencyStr = latestCheck ? `${latestCheck.latency} ms` : '—';
+
                       return (
                         <tr key={ep.id}>
                           <td>
-                            <span className={`api-method method-${ep.method.toLowerCase()}`}>
-                              {ep.method}
+                            <span className={`api-method method-${(ep.method || 'GET').toLowerCase()}`}>
+                              {ep.method || 'GET'}
                             </span>
                           </td>
                           <td>
-                            <span className="api-path" title={ep.url}>{ep.name}</span>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{ep.name}</div>
+                            <span className="api-path">{ep.url}</span>
                           </td>
-                          <td>{ep.uptime ?? 100}%</td>
-                          <td>{check?.latency ? `${check.latency} ms` : '—'}</td>
+                          <td>{latencyStr}</td>
                           <td>
-                            <span className={`pill-status ${statusClass}`}>
-                              ● {statusText}
+                            <span className={`pill-status ${isHealthy === true ? 'healthy' : isHealthy === false ? 'failed' : ''}`}>
+                              ● {isHealthy === true ? 'Healthy' : isHealthy === false ? 'Failed' : 'Pending'}
                             </span>
+                          </td>
+                          <td>
+                            <button
+                              className="btn-action btn-probe"
+                              onClick={() => handleProbe(ep.id, ep.name)}
+                              disabled={probingId === ep.id || ep.isMock}
+                              title={ep.isMock ? 'Seed database to probe live endpoints' : 'Execute active health probe'}
+                            >
+                              {probingId === ep.id ? 'Pinging...' : '⚡ Probe'}
+                            </button>
                           </td>
                         </tr>
                       );
-                    })
-                  )}
-                </tbody>
-              </table>
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
 
-          {/* Section 2: Recent Activity */}
+            {/* Section 2: Recent Incident Audit Trail & Recent Telemetry */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              
+              {/* Incident Management */}
+              <div className="panel-card">
+                <div className="panel-header">
+                  <h2 className="panel-title">
+                    <span>🚨</span> Operational Incidents
+                  </h2>
+                  <span className="panel-badge">Failure Log</span>
+                </div>
+
+                <div className="activity-list">
+                  {displayIncidents.map((act) => (
+                    <div key={act.id} className="activity-item">
+                      <div className={`activity-icon-bullet ${act.status === 'OPEN' ? 'bullet-red' : 'bullet-green'}`} />
+                      <div style={{ flex: 1 }}>
+                        <div className="activity-text">
+                          <strong>{act.title}</strong>
+                          <div>{act.endpoint?.name || 'External API'} — Status: <code>{act.status}</code></div>
+                        </div>
+                        <div className="activity-time">{new Date(act.createdAt).toLocaleString()}</div>
+                      </div>
+                      {act.status === 'OPEN' && !act.isMock && (
+                        <button
+                          className="btn-action btn-resolve"
+                          onClick={() => handleResolveIncident(act.id)}
+                          title="Mark incident as resolved in database"
+                        >
+                          ✓ Resolve
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recent Probes from origin/main */}
+              {endpoints.some((ep) => ep.latestCheck) && (
+                <div className="panel-card">
+                  <div className="panel-header">
+                    <h2 className="panel-title">
+                      <span>📋</span> Recent Probe Activity
+                    </h2>
+                    <span className="panel-badge">Live Telemetry</span>
+                  </div>
+                  <div className="activity-list">
+                    {endpoints
+                      .filter((ep) => ep.latestCheck)
+                      .slice(0, 4)
+                      .map((ep) => (
+                        <div key={ep.id} className="activity-item">
+                          <div className={`activity-icon-bullet ${ep.latestCheck.isHealthy ? 'bullet-green' : 'bullet-red'}`} />
+                          <div>
+                            <div className="activity-text">
+                              <strong>{ep.name}</strong>
+                              <div>
+                                {ep.latestCheck.isHealthy
+                                  ? `HTTP ${ep.latestCheck.statusCode} verified in ${ep.latestCheck.latency} ms`
+                                  : ep.latestCheck.errorMessage || `HTTP ${ep.latestCheck.statusCode || 'ERR'} failed`}
+                              </div>
+                            </div>
+                            <div className="activity-time">
+                              {new Date(ep.latestCheck.checkedAt).toLocaleTimeString()}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+        {/* TAB 2: Breaking-Change Analysis Engine */}
+        {activeTab === 'diff' && (
           <div className="panel-card">
             <div className="panel-header">
               <h2 className="panel-title">
-                <span>📋</span> Recent Probe Activity
+                <span>📐</span> Breaking-Change Contract Analyzer
               </h2>
-              <span className="panel-badge">Live Telemetry</span>
+              <span className="panel-badge">OpenAPI / Swagger Semantic Diff</span>
             </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+              Compares API contract specifications to detect removed endpoints, removed fields,
+              newly required query/body parameters, and incompatible data-type changes before deployment.
+            </p>
 
-            {endpoints.filter((ep) => ep.latestCheck).length === 0 ? (
-              <p className="endpoint-state">No health probes executed yet. Trigger a manual probe from API Endpoints.</p>
-            ) : (
-              <div className="activity-list">
-                {endpoints
-                  .filter((ep) => ep.latestCheck)
-                  .slice(0, 4)
-                  .map((ep) => (
-                    <div key={ep.id} className="activity-item">
-                      <div className={`activity-icon-bullet ${ep.latestCheck.isHealthy ? 'bullet-green' : 'bullet-red'}`} />
-                      <div>
-                        <div className="activity-text">
-                          <strong>{ep.name}</strong>
-                          <div>
-                            {ep.latestCheck.isHealthy
-                              ? `HTTP ${ep.latestCheck.statusCode} verified in ${ep.latestCheck.latency} ms`
-                              : ep.latestCheck.errorMessage || `HTTP ${ep.latestCheck.statusCode || 'ERR'} failed`}
-                          </div>
-                        </div>
-                        <div className="activity-time">
-                          {new Date(ep.latestCheck.checkedAt).toLocaleTimeString()}
-                        </div>
-                      </div>
+            <button
+              className="btn-action btn-probe"
+              onClick={handleRunContractDiff}
+              disabled={isDiagnosticRunning}
+            >
+              {isDiagnosticRunning ? 'Analyzing...' : '▶ Run Sample Contract Diff (Order API v1 vs v2)'}
+            </button>
+
+            {diffReport && (
+              <div className="diagnostic-box">
+                {diffReport.error ? (
+                  <div style={{ color: 'var(--status-error)' }}>Error: {diffReport.error}</div>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span className={diffReport.isBreaking ? 'tag-breaking' : 'tag-safe'}>
+                        {diffReport.isBreaking ? '⚠️ BREAKING CHANGES DETECTED' : '✅ CONTRACT COMPATIBLE'}
+                      </span>
+                      <span>Risk Level: <strong>{diffReport.riskLevel}</strong></span>
+                      <span>Breaking: {diffReport.breakingCount}</span>
+                      <span>Non-Breaking: {diffReport.nonBreakingCount}</span>
                     </div>
-                  ))}
+                    <div>
+                      {diffReport.changes?.map((ch, idx) => (
+                        <div key={idx} style={{ padding: '0.3rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <span className={ch.isBreaking ? 'tag-breaking' : 'tag-safe'} style={{ marginRight: '0.5rem' }}>
+                            {ch.isBreaking ? 'BREAKING' : 'SAFE'}
+                          </span>
+                          <span>{ch.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
+        )}
 
-        </section>
+        {/* TAB 3: Model Context Protocol (MCP) Diagnostic Server */}
+        {activeTab === 'mcp' && (
+          <div className="panel-card">
+            <div className="panel-header">
+              <h2 className="panel-title">
+                <span>🤖</span> Model Context Protocol (MCP) Diagnostics
+              </h2>
+              <span className="panel-badge">RFC / AI Tool Execution</span>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+              API Sentinel exposes structured diagnostic capabilities over Model Context Protocol (MCP).
+              Compatible AI agents can query real-time health, inspect active incidents, and assess downstream consumer impact.
+            </p>
+
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+              <button
+                className="btn-action"
+                onClick={() => handleRunMcpDiagnostic('inspect_incidents')}
+                disabled={isDiagnosticRunning}
+              >
+                🛠️ Run MCP: inspect_incidents
+              </button>
+              <button
+                className="btn-action"
+                onClick={() => handleRunMcpDiagnostic('investigate_impact')}
+                disabled={isDiagnosticRunning}
+              >
+                🛠️ Run MCP: investigate_impact
+              </button>
+              <button
+                className="btn-action"
+                onClick={() => handleRunMcpDiagnostic('get_endpoint_health')}
+                disabled={isDiagnosticRunning}
+              >
+                🛠️ Run MCP: get_endpoint_health
+              </button>
+            </div>
+
+            {mcpReport && (
+              <div className="diagnostic-box">
+                {mcpReport.error ? (
+                  <div style={{ color: 'var(--status-error)' }}>Error: {mcpReport.error}</div>
+                ) : (
+                  <div>
+                    <div style={{ color: 'var(--accent-blue)', fontWeight: 600, marginBottom: '0.5rem' }}>
+                      MCP Tool Response Envelope:
+                    </div>
+                    {mcpReport.content?.map((item, idx) => (
+                      <div key={idx}>{item.text}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
       </div>
     </div>

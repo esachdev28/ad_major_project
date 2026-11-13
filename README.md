@@ -20,6 +20,9 @@
 10. [Security Protections](#10-security-protections)
 11. [Automated Test Suite](#11-automated-test-suite)
 12. [Known Limitations](#12-known-limitations)
+13. [End-to-End Database Request Flow](#13-end-to-end-database-request-flow)
+14. [Quick CLI Verification](#14-quick-cli-verification)
+15. [Troubleshooting & Verification](#15-troubleshooting--verification)
 
 ---
 
@@ -225,5 +228,102 @@ npm test
 
 ## 12. Known Limitations
 
+## 12. Known Limitations
+
 - **Frontend Automated Tests**: Verification relies on Vite production builds (`npm run build`) and comprehensive backend API/integration tests (`npm test`); standalone browser/React component unit tests (e.g. Vitest/Playwright) were not added.
 - **Local Network Monitoring**: Because SSRF protection blocks `127.0.0.1` and private subnets, internal intranet endpoints cannot be probed unless explicitly deployed outside blocked ranges.
+
+---
+
+## 13. End-to-End Database Request Flow
+
+```
+┌──────────────────┐
+│  React Browser   │
+│ (Dashboard.jsx)  │
+└────────┬─────────┘
+         │
+         │ 1. useEffect triggers getDashboardStats()
+         ▼
+┌──────────────────┐
+│  Frontend Client │
+│     (api.js)     │
+└────────┬─────────┘
+         │
+         │ 2. HTTP GET /api/dashboard/stats
+         ▼
+┌──────────────────┐
+│  Express Server  │
+│(dashboardRoutes) │
+└────────┬─────────┘
+         │
+         │ 3. Invokes queries via reusable client
+         ▼
+┌──────────────────┐
+│  Prisma Client   │
+│  (lib/prisma.js) │
+└────────┬─────────┘
+         │
+         │ 4. Executes SQL queries:
+         │    - count() on APIEndpoint
+         │    - findMany() with nested latest HealthCheck
+         │    - aggregate() for average latency
+         ▼
+┌──────────────────┐
+│    PostgreSQL    │
+│  (api_sentinel)  │
+└────────┬─────────┘
+         │
+         │ 5. Returns SQL result rows
+         ▼
+┌──────────────────┐
+│  Prisma Client   │
+└────────┬─────────┘
+         │
+         │ 6. Deserializes rows into JavaScript objects
+         ▼
+┌──────────────────┐
+│  Express Server  │
+└────────┬─────────┘
+         │
+         │ 7. Responds with JSON: { success: true, dataSource: "database", data: {...} }
+         ▼
+┌──────────────────┐
+│  React Browser   │
+└──────────────────┘
+         │ 8. setStats(data) -> Virtual DOM reconciliation -> UI updates!
+```
+
+---
+
+## 14. Quick CLI Verification
+
+```bash
+# 1. Test server and database health
+curl http://localhost:5001/api/health
+curl http://localhost:5001/api/health/db
+
+# 2. Test dashboard statistics
+curl http://localhost:5001/api/dashboard/stats
+
+# 3. List monitored endpoints
+curl http://localhost:5001/api/endpoints
+
+# 4. Trigger active failure probe on an endpoint
+curl -X POST http://localhost:5001/api/endpoints/<ENDPOINT_ID>/probe
+
+# 5. Discover MCP diagnostic tools
+curl http://localhost:5001/api/mcp/tools
+```
+
+---
+
+## 15. Troubleshooting & Verification
+
+- **Database Connection Failed (`/api/health/db` returns 503):**
+  - Check that PostgreSQL is running: `pg_isready`
+  - Verify your `DATABASE_URL` credentials in `backend/.env`.
+- **Prisma Client Out of Sync:**
+  - If you modify `schema.prisma`, run `npx prisma generate` to re-generate the client.
+- **Database Tables Empty:**
+  - If no endpoints are registered yet, the API returns zero values (`totalApis: 0, averageLatency: "0 ms"`). The dashboard displays these cleanly without crashing.

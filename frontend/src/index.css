@@ -662,6 +662,80 @@ body {
   margin-top: 2px;
 }
 
+/* =========================================================
+   Interactive Action Buttons & Diagnostic Panels
+   ========================================================= */
+.btn-action {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-action:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.btn-action.btn-probe {
+  background-color: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: var(--accent-blue);
+}
+
+.btn-action.btn-probe:hover:not(:disabled) {
+  background-color: var(--accent-blue);
+  color: #ffffff;
+}
+
+.btn-action.btn-resolve {
+  background-color: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: var(--status-success);
+}
+
+.btn-action.btn-resolve:hover:not(:disabled) {
+  background-color: var(--status-success);
+  color: #ffffff;
+}
+
+.diagnostic-box {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  margin-top: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  max-height: 250px;
+}
+
+.tag-breaking {
+  background-color: var(--status-error-bg);
+  color: var(--status-error);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.tag-safe {
+  background-color: var(--status-success-bg);
+  color: var(--status-success);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
 /* API endpoint management */
 .endpoints-content { max-width: 1200px; }
 .endpoints-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }

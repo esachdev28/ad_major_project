@@ -45,6 +45,8 @@ const healthRoutes = require('./routes/healthRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const endpointRoutes = require('./routes/endpointRoutes');
 const incidentRoutes = require('./routes/incidentRoutes');
+const versionRoutes = require('./routes/versionRoutes');
+const integrationRoutes = require('./routes/integrationRoutes');
 const contractRoutes = require('./routes/contractRoutes');
 const dependencyRoutes = require('./routes/dependencyRoutes');
 const mcpRoutes = require('./routes/mcpRoutes');
@@ -94,6 +96,8 @@ app.use('/api/health', healthRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/endpoints', endpointRoutes);
 app.use('/api/incidents', incidentRoutes);
+app.use('/api/versions', versionRoutes);
+app.use('/api/integrations', integrationRoutes);
 app.use('/api/contracts', contractRoutes);
 app.use('/api/dependencies', dependencyRoutes);
 app.use('/api/mcp', mcpRoutes);
@@ -119,7 +123,12 @@ app.get('*', (req, res) => {
         endpoints: {
           health: '/api/health',
           dbHealth: '/api/health/db',
-          stats: '/api/dashboard/stats'
+          stats: '/api/dashboard/stats',
+          endpoints: '/api/endpoints',
+          incidents: '/api/incidents',
+          versions: '/api/versions',
+          integrations: '/api/integrations',
+          mcpTools: '/api/mcp/tools'
         }
       });
     }
@@ -172,6 +181,11 @@ if (require.main === module) {
     console.log(`🩺 Server Health check:     http://localhost:${PORT}/api/health`);
     console.log(`🗄️  Database Health check:   http://localhost:${PORT}/api/health/db`);
     console.log(`📊 Dashboard stats endpoint: http://localhost:${PORT}/api/dashboard/stats`);
+    console.log(`🌐 Endpoints & Probing:      http://localhost:${PORT}/api/endpoints`);
+    console.log(`🚨 Incidents audit log:      http://localhost:${PORT}/api/incidents`);
+    console.log(`📐 Versioning & Diff Engine: http://localhost:${PORT}/api/versions`);
+    console.log(`🔗 Consumer Integrations:    http://localhost:${PORT}/api/integrations`);
+    console.log(`🤖 MCP Diagnostic Server:    http://localhost:${PORT}/api/mcp/tools`);
     console.log(`===============================================`);
   });
 }
