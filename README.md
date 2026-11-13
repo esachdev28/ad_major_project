@@ -234,22 +234,39 @@ npm start
 
 ## 10. Available Backend Routes
 
-| Method | Endpoint | Description | Sample Response |
+| Method | Endpoint | Description | Sample Response / Purpose |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/api/health` | Server health check | `{"success":true,"message":"API Sentinel backend is running"}` |
 | `GET` | `/api/health/db` | Database health check (`SELECT 1`) | `{"success":true,"message":"Database connection successful"}` |
-| `GET` | `/api/dashboard/stats` | Dynamic database metrics | `{"success":true,"dataSource":"database","data":{"totalApis":0,"healthyApis":0,"failedApis":0,"averageLatency":"0 ms"}}` |
+| `GET` | `/api/dashboard/stats` | Dynamic database metrics | `{"success":true,"dataSource":"database","data":{"totalApis":2,"healthyApis":1,...}}` |
+| `GET` | `/api/endpoints` | List all monitored APIs | Returns endpoints with latest checks & incident count |
+| `POST` | `/api/endpoints` | Register a new API endpoint | `{"name":"User API","url":"https://api.example.com","method":"GET"}` |
+| `POST` | `/api/endpoints/:id/probe` | **Active Failure Detection** | Pings target URL, logs latency/status, flags incident on failure |
+| `GET` | `/api/incidents` | Incident tracking log | Lists open or resolved failure events |
+| `PATCH` | `/api/incidents/:id` | Resolve / update incident | Transitions status (`RESOLVED`), timestamps `resolvedAt` |
+| `POST` | `/api/versions` | Store API contract spec | Uploads versioned OpenAPI/Swagger JSON |
+| `POST` | `/api/versions/diff` | **Breaking-Change Engine** | Compares specs: flags removed endpoints, removed fields, new required fields, incompatible types |
+| `GET` | `/api/integrations/impact/:id` | **Impact Assessment** | Computes blast radius, affected consumers & alerting contacts |
+| `GET` | `/api/mcp/tools` | **MCP Tools Discovery** | Returns structured tool schemas conforming to Model Context Protocol |
+| `POST` | `/api/mcp/tools/call` | **MCP Diagnostic Runner** | Executes AI diagnostic tool (`get_endpoint_health`, `inspect_incidents`, etc.) |
 
 ### Testing Endpoints via Command Line
 ```bash
-# Test server health
+# 1. Test server and database health
 curl http://localhost:5001/api/health
-
-# Test database connection
 curl http://localhost:5001/api/health/db
 
-# Test dashboard statistics
+# 2. Test dashboard statistics
 curl http://localhost:5001/api/dashboard/stats
+
+# 3. List monitored endpoints
+curl http://localhost:5001/api/endpoints
+
+# 4. Trigger active failure probe on an endpoint
+curl -X POST http://localhost:5001/api/endpoints/<ENDPOINT_ID>/probe
+
+# 5. Discover MCP diagnostic tools
+curl http://localhost:5001/api/mcp/tools
 ```
 
 ---
