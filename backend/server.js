@@ -43,6 +43,11 @@ const prisma = require('./lib/prisma');
 // Import route modules
 const healthRoutes = require('./routes/healthRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const endpointRoutes = require('./routes/endpointRoutes');
+const incidentRoutes = require('./routes/incidentRoutes');
+const versionRoutes = require('./routes/versionRoutes');
+const integrationRoutes = require('./routes/integrationRoutes');
+const mcpRoutes = require('./routes/mcpRoutes');
 
 const app = express();
 
@@ -78,6 +83,11 @@ app.use(express.static(distPath));
 // Mount dedicated API routers
 app.use('/api/health', healthRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/endpoints', endpointRoutes);
+app.use('/api/incidents', incidentRoutes);
+app.use('/api/versions', versionRoutes);
+app.use('/api/integrations', integrationRoutes);
+app.use('/api/mcp', mcpRoutes);
 
 // Fallback for unmatched /api requests (returns clean JSON 404)
 app.use('/api', (req, res) => {
@@ -99,7 +109,12 @@ app.get('*', (req, res) => {
         endpoints: {
           health: '/api/health',
           dbHealth: '/api/health/db',
-          stats: '/api/dashboard/stats'
+          stats: '/api/dashboard/stats',
+          endpoints: '/api/endpoints',
+          incidents: '/api/incidents',
+          versions: '/api/versions',
+          integrations: '/api/integrations',
+          mcpTools: '/api/mcp/tools'
         }
       });
     }
@@ -148,6 +163,11 @@ app.listen(PORT, () => {
   console.log(`🩺 Server Health check:     http://localhost:${PORT}/api/health`);
   console.log(`🗄️  Database Health check:   http://localhost:${PORT}/api/health/db`);
   console.log(`📊 Dashboard stats endpoint: http://localhost:${PORT}/api/dashboard/stats`);
+  console.log(`🌐 Endpoints & Probing:      http://localhost:${PORT}/api/endpoints`);
+  console.log(`🚨 Incidents audit log:      http://localhost:${PORT}/api/incidents`);
+  console.log(`📐 Versioning & Diff Engine: http://localhost:${PORT}/api/versions`);
+  console.log(`🔗 Consumer Integrations:    http://localhost:${PORT}/api/integrations`);
+  console.log(`🤖 MCP Diagnostic Server:    http://localhost:${PORT}/api/mcp/tools`);
   console.log(`===============================================`);
 });
 
