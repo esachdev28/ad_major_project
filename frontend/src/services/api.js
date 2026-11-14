@@ -88,8 +88,9 @@ async function apiRequest(endpoint, options = {}) {
   if (token) authHeaders['Authorization'] = `Bearer ${token}`;
   if (orgId) authHeaders['x-organization-id'] = orgId;
 
+  let response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -98,32 +99,33 @@ async function apiRequest(endpoint, options = {}) {
       },
       body: options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : undefined
     });
-
-    if (!response.ok) {
-      // Try to parse the backend's JSON error response to extract custom error message
-      let errorMessage = `Server responded with status ${response.status}: ${response.statusText}`;
-      try {
-        const errorData = await response.json();
-        if (errorData && errorData.message) {
-          errorMessage = errorData.message;
-        }
-      } catch (_) {
-        // Fallback to HTTP status message if response is not JSON
-      }
-      throw new Error(errorMessage);
-    }
-
-    const data = await response.json();
-    return data;
   } catch (error) {
-    // If fetch failed due to network / connection refused (e.g. backend offline)
+    // A TypeError from fetch usually means the server could not be reached.
     if (error.name === 'TypeError') {
       const host = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5001');
       throw new Error(`Cannot connect to backend at ${host}. Ensure Express is running.`);
     }
-    // Re-throw with original or enhanced message
     throw error;
   }
+
+  // Empty responses are valid for operations that return HTTP 204.
+  if (response.status === 204) return null;
+
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    if (response.ok) {
+      throw new Error('Backend returned an invalid JSON response.');
+    }
+  }
+
+  if (!response.ok) {
+    const fallbackMessage = `Server responded with status ${response.status}: ${response.statusText || 'Request failed'}`;
+    throw new Error(data?.message || fallbackMessage);
+  }
+
+  return data;
 }
 
 // ==========================================
