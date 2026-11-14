@@ -47,9 +47,13 @@ async function runTool(toolName, args = {}) {
     if (toolDef.inputSchema) {
       const zodObject = z.object(toolDef.inputSchema);
       const parsed = zodObject.safeParse(args);
-      if (parsed.success) {
-        validatedArgs = parsed.data;
+      if (!parsed.success) {
+        const err = new Error('Invalid tool arguments: ' + parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', '));
+        err.statusCode = 400;
+        err.issues = parsed.error.issues;
+        throw err;
       }
+      validatedArgs = parsed.data;
     }
     return await toolDef.handler(validatedArgs);
   }
@@ -60,14 +64,20 @@ async function runTool(toolName, args = {}) {
       where: args.endpointId ? { id: args.endpointId } : {},
       include: { healthChecks: { orderBy: { checkedAt: 'desc' }, take: 10 } }
     });
-    if (!endpoint) throw new Error('Endpoint not found');
+    if (!endpoint) {
+      const err = new Error('Endpoint not found');
+      err.statusCode = 404;
+      throw err;
+    }
     return {
       content: [{ type: 'text', text: `Health status for ${endpoint.name}: ${endpoint.url}` }],
       structuredData: endpoint
     };
   }
 
-  throw new Error(`Unknown MCP tool: '${toolName}'`);
+  const err = new Error(`Unknown MCP tool: '${toolName}'`);
+  err.statusCode = 404;
+  throw err;
 }
 
 // GET /api/mcp/tools
@@ -134,9 +144,10 @@ router.post('/invoke', async (req, res) => {
     });
   } catch (error) {
     console.error('MCP HTTP invoke error:', error.message);
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || 'Failed to execute MCP tool',
+      errors: error.issues,
     });
   }
 });

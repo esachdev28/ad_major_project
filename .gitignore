@@ -22,3 +22,10 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Project specification & instruction prompts (kept strictly local)
+*PROMPT*.md
+*prompt*.md
+TASK.md
+INITIAL_IDE_PROMPT.md
+MASTER_PROMPT.md
