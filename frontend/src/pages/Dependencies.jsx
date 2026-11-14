@@ -214,6 +214,12 @@ export default function Dependencies() {
     }
   };
 
+  function selectService(serviceId) {
+    setSelectedServiceId(serviceId);
+    setBaselineVersionId('');
+    setTargetVersionId('');
+  }
+
   const handleCreateService = async (e) => {
     e.preventDefault();
     try {
@@ -434,10 +440,17 @@ export default function Dependencies() {
                 return (
                   <g
                     key={node.id}
-                    onClick={() => {
-                      setSelectedServiceId(node.id);
-                      setBaselineVersionId('');
-                      setTargetVersionId('');
+                    className="service-node"
+                    role="button"
+                    tabIndex="0"
+                    aria-label={`Select service ${node.name}`}
+                    aria-pressed={isTarget}
+                    onClick={() => selectService(node.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        selectService(node.id);
+                      }
                     }}
                     style={{ cursor: 'pointer' }}
                   >

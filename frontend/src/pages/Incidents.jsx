@@ -51,8 +51,7 @@ export default function Incidents() {
     loadData();
   }, [loadData]);
 
-  const handleAcknowledge = async (id, e) => {
-    e.stopPropagation();
+  const handleAcknowledge = async (id) => {
     try {
       const res = await acknowledgeIncident(id);
       if (res.success) {
@@ -68,8 +67,7 @@ export default function Incidents() {
     }
   };
 
-  const handleResolve = async (id, e) => {
-    e.stopPropagation();
+  const handleResolve = async (id) => {
     try {
       const res = await resolveIncident(id);
       if (res.success) {
@@ -212,7 +210,7 @@ export default function Incidents() {
           <div className="table-header">
             <h3>Tracked Incidents ({incidents.length})</h3>
             <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-              Click any row to inspect timeline
+              Select an incident title to inspect its timeline
             </span>
           </div>
 
@@ -247,11 +245,7 @@ export default function Incidents() {
                   const stStyle = getStatusBadgeStyle(inc.status);
 
                   return (
-                    <tr
-                      key={inc.id}
-                      onClick={() => handleInspectIncident(inc.id)}
-                      style={{ cursor: 'pointer' }}
-                    >
+                    <tr key={inc.id}>
                       <td>
                         <span
                           style={{
@@ -268,7 +262,14 @@ export default function Incidents() {
                         </span>
                       </td>
                       <td>
-                        <div style={{ fontWeight: 600, color: '#f8fafc' }}>{inc.title}</div>
+                        <button
+                          type="button"
+                          className="incident-inspect-button"
+                          onClick={() => handleInspectIncident(inc.id)}
+                          aria-label={`Inspect incident: ${inc.title}`}
+                        >
+                          {inc.title}
+                        </button>
                         <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
                           {inc.endpoint?.name} ({inc.endpoint?.method} {inc.endpoint?.url})
                         </div>
@@ -301,7 +302,7 @@ export default function Incidents() {
                         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                           {inc.status === 'OPEN' && (
                             <button
-                              onClick={(e) => handleAcknowledge(inc.id, e)}
+                              onClick={() => handleAcknowledge(inc.id)}
                               style={{
                                 backgroundColor: '#1e293b',
                                 border: '1px solid #f59e0b',
@@ -317,7 +318,7 @@ export default function Incidents() {
                           )}
                           {inc.status !== 'RESOLVED' && (
                             <button
-                              onClick={(e) => handleResolve(inc.id, e)}
+                              onClick={() => handleResolve(inc.id)}
                               style={{
                                 backgroundColor: '#1e293b',
                                 border: '1px solid #10b981',

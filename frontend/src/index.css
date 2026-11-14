@@ -918,3 +918,31 @@ body {
     overflow-x: auto;
   }
 }
+
+.workspace-switcher:focus-visible,
+.incident-inspect-button:focus-visible,
+.contract-version-button:focus-visible,
+.service-node:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.incident-inspect-button,
+.contract-version-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.incident-inspect-button { font-weight: 600; }
+.contract-version-button {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 0.6rem;
+}

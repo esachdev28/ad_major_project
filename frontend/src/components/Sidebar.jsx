@@ -58,7 +58,11 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate, currentU
       </div>
 
       {/* Organization Workspace Card */}
-      <div
+      <button
+        type="button"
+        className="workspace-switcher"
+        aria-haspopup="dialog"
+        aria-label={currentUser ? `Manage account and ${activeOrgName}` : 'Sign in or create an account'}
         onClick={onOpenAuth}
         style={{
           cursor: 'pointer',
@@ -71,6 +75,9 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate, currentU
           alignItems: 'center',
           justifyContent: 'space-between',
           transition: 'all 0.15s ease',
+          font: 'inherit',
+          color: 'inherit',
+          width: '100%',
         }}
         title="Manage Organization & Account"
       >
@@ -85,7 +92,7 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate, currentU
         <span style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: 500 }}>
           {currentUser ? '⚙️' : 'Sign In'}
         </span>
-      </div>
+      </button>
 
       {/* Navigation List */}
       <nav className="sidebar-nav">
@@ -99,6 +106,7 @@ export default function Sidebar({ activeItem = 'Dashboard', onNavigate, currentU
               title={item.isImplemented ? item.name : `${item.name} (Upcoming in later commits)`}
               onClick={() => item.isImplemented && onNavigate?.(item.name)}
               disabled={!item.isImplemented}
+              aria-current={isActive ? 'page' : undefined}
             >
               <div className="nav-item-content">
                 <span className="nav-icon">{item.icon}</span>
