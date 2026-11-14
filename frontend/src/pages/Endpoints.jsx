@@ -41,11 +41,70 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
 
   async function submit(event) {
     event.preventDefault();
+
+    const name = form.name.trim();
+    const url = form.url.trim();
+    if (!name) {
+      setError('API name is required.');
+      return;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      setError('Enter a valid API URL.');
+      return;
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      setError('API URL must use HTTP or HTTPS.');
+      return;
+    }
+
+    if (form.headers.trim()) {
+      try {
+        const headers = JSON.parse(form.headers);
+        if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
+          setError('Custom headers must be a JSON object.');
+          return;
+        }
+      } catch {
+        setError('Custom headers must be valid JSON.');
+        return;
+      }
+    }
+
+    const expectedStatus = Number(form.expectedStatus);
+    const interval = Number(form.interval);
+    const timeout = Number(form.timeout);
+    if (!Number.isInteger(expectedStatus) || expectedStatus < 100 || expectedStatus > 599) {
+      setError('Expected status code must be a whole number from 100 to 599.');
+      return;
+    }
+    if (!Number.isInteger(interval) || interval < 5) {
+      setError('Monitoring interval must be a whole number of at least 5 seconds.');
+      return;
+    }
+    if (!Number.isInteger(timeout) || timeout < 100 || timeout > 30000) {
+      setError('Timeout must be a whole number from 100 to 30000 milliseconds.');
+      return;
+    }
+
     setSaving(true);
     setError('');
     try {
-      if (endpoint) await updateEndpoint(endpoint.id, form);
-      else await createEndpoint(form);
+      const endpointData = {
+        ...form,
+        name,
+        url,
+        description: form.description.trim(),
+        expectedStatus,
+        interval,
+        timeout,
+        headers: form.headers.trim(),
+      };
+      if (endpoint) await updateEndpoint(endpoint.id, endpointData);
+      else await createEndpoint(endpointData);
       onSaved(
         endpoint
           ? 'API endpoint updated.'
@@ -105,8 +164,10 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
               Expected Status Code
               <input
                 type="number"
+                required
                 min="100"
                 max="599"
+                step="1"
                 value={form.expectedStatus}
                 onChange={(event) => setForm({ ...form, expectedStatus: Number(event.target.value) })}
               />
@@ -117,7 +178,9 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
               Interval (seconds)
               <input
                 type="number"
+                required
                 min="5"
+                step="1"
                 value={form.interval}
                 onChange={(event) => setForm({ ...form, interval: Number(event.target.value) })}
               />
@@ -126,8 +189,10 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
               Timeout (ms)
               <input
                 type="number"
+                required
                 min="100"
                 max="30000"
+                step="1"
                 value={form.timeout}
                 onChange={(event) => setForm({ ...form, timeout: Number(event.target.value) })}
               />
@@ -182,6 +247,7 @@ export default function Endpoints({ onEndpointsChanged }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'healthy' | 'failing'
   const [probingId, setProbingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   async function loadEndpoints() {
     setLoading(true);
@@ -190,6 +256,7 @@ export default function Endpoints({ onEndpointsChanged }) {
       const result = await getEndpoints();
       setEndpoints(result.data || []);
     } catch (requestError) {
+      setEndpoints([]);
       setError(requestError.message || 'Unable to load API endpoints. Please try again.');
     } finally {
       setLoading(false);
@@ -232,11 +299,15 @@ export default function Endpoints({ onEndpointsChanged }) {
   }
 
   async function removeEndpoint(endpoint) {
+    if (deletingId) return;
+
     const confirmed = window.confirm(
       `Delete "${endpoint.name}"? Associated health checks, incidents, and API versions may also be deleted.`
     );
     if (!confirmed) return;
     setMessage('');
+    setError('');
+    setDeletingId(endpoint.id);
     try {
       await deleteEndpoint(endpoint.id);
       setMessage('API endpoint deleted.');
@@ -244,6 +315,8 @@ export default function Endpoints({ onEndpointsChanged }) {
       onEndpointsChanged?.();
     } catch (requestError) {
       setError(requestError.message || 'Unable to delete API endpoint.');
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -338,8 +411,10 @@ export default function Endpoints({ onEndpointsChanged }) {
         <section className="panel-card">
           {loading ? (
             <p className="endpoint-state">Loading API endpoints...</p>
-          ) : filtered.length === 0 ? (
-            <p className="endpoint-state">No matching API endpoints found.</p>
+          ) : error ? null : filtered.length === 0 && endpoints.length > 0 ? (
+            <p className="endpoint-state">No endpoints match your search or status filter.</p>
+          ) : endpoints.length === 0 ? (
+            <p className="endpoint-state">No API endpoints registered yet. Add your first endpoint.</p>
           ) : (
             <div className="endpoint-list">
               {filtered.map((endpoint) => {
@@ -372,7 +447,7 @@ export default function Endpoints({ onEndpointsChanged }) {
                         <p className="endpoint-description">{endpoint.description}</p>
                       )}
                       <p className="endpoint-date">
-                        Uptime: {endpoint.uptime ?? 100}% · Expected HTTP {endpoint.expectedStatus || 200} · Interval {endpoint.interval || 60}s
+                        Uptime: {endpoint.uptime ?? '—'}{endpoint.uptime != null ? '%' : ''} · Expected HTTP {endpoint.expectedStatus || 200} · Interval {endpoint.interval || 60}s
                       </p>
                     </div>
                     <div className="endpoint-actions">
@@ -386,8 +461,12 @@ export default function Endpoints({ onEndpointsChanged }) {
                       <button className="endpoint-secondary" onClick={() => openEdit(endpoint)}>
                         Edit
                       </button>
-                      <button className="endpoint-danger" onClick={() => removeEndpoint(endpoint)}>
-                        Delete
+                      <button
+                        className="endpoint-danger"
+                        disabled={deletingId !== null}
+                        onClick={() => removeEndpoint(endpoint)}
+                      >
+                        {deletingId === endpoint.id ? 'Deleting...' : 'Delete'}
                       </button>
                     </div>
                   </article>

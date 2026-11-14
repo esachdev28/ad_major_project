@@ -108,11 +108,12 @@ model APIEndpoint {
   userId           String?
   user             User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  // Relationships: One endpoint has many health checks, incidents, version specs, and linked services
+  // Relationships: One endpoint has many health checks, incidents, version specs, linked services, integrations, and reports
   healthChecks      HealthCheck[]
   incidents         Incident[]
   versions          APIVersion[]
   services          Service[]
+  integrations      Integration[]
   diagnosticReports DiagnosticReport[]
 
   @@index([organizationId])
@@ -191,7 +192,31 @@ model APIVersion {
 }
 
 // ------------------------------------------------------------------------------
-// Model 6: Service
+// ------------------------------------------------------------------------------
+// Model 6: Integration
+// Represents downstream applications or services that consume an API endpoint.
+// Used for consumer dependency tracking and breaking-change impact assessment.
+// ------------------------------------------------------------------------------
+model Integration {
+  id           String      @id @default(cuid())
+  endpointId   String
+  consumerName String      // Name of the consuming application/service (e.g., "Checkout Gateway")
+  serviceType  String      @default("frontend") // frontend, microservice, mobile, third-party
+  contactEmail String?     // Point of contact for alerting affected teams
+  environment  String      @default("production") // production, staging, development
+  criticality  String      @default("HIGH") // CRITICAL, HIGH, MEDIUM, LOW
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Cascade delete: If the parent APIEndpoint is deleted, delete its consumer integrations
+  endpoint     APIEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@map("integrations")
+}
+
+// ------------------------------------------------------------------------------
+// Model 7: Service
 // Represents an internal or external microservice or consumer application.
 // ------------------------------------------------------------------------------
 model Service {
@@ -219,7 +244,7 @@ model Service {
 }
 
 // ------------------------------------------------------------------------------
-// Model 7: ServiceDependency (Integration Edge)
+// Model 8: ServiceDependency (Integration Edge)
 // Directed edge representing Provider -> Consumer dependency.
 // ------------------------------------------------------------------------------
 model ServiceDependency {
@@ -240,7 +265,7 @@ model ServiceDependency {
 }
 
 // ------------------------------------------------------------------------------
-// Model 8: DiagnosticReport
+// Model 9: DiagnosticReport
 // Stores AI-assisted and evidence-backed incident investigation reports.
 // ------------------------------------------------------------------------------
 model DiagnosticReport {

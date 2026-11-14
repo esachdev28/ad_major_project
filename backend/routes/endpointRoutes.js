@@ -1,3 +1,37 @@
+/**
+ * endpointRoutes.js — API Endpoint Management, Failure Detection & Telemetry Probing
+ * 
+ * 1. Why this file exists:
+ *    Manages the lifecycle of registered API endpoints in API Sentinel. It provides
+ *    CRUD operations, SSRF-safe URL validation, encrypted header storage, real-time
+ *    health probes, failure detection, incident auto-flagging, and latency percentile analytics.
+ * 
+ * 2. What its responsibilities are:
+ *    - GET /api/endpoints : List monitored endpoints with uptime, latest check, and open incident status.
+ *    - GET /api/endpoints/:id : Retrieve endpoint details, checks, incidents, versions, and integrations.
+ *    - POST /api/endpoints : Create an endpoint with SSRF guard and execute an initial probe.
+ *    - PUT /api/endpoints/:id : Update endpoint configuration with validation.
+ *    - DELETE /api/endpoints/:id : Cascade-delete endpoint and associated telemetry.
+ *    - POST /api/endpoints/:id/check & POST /api/endpoints/:id/probe : Execute manual/on-demand health probe.
+ *    - GET /api/endpoints/:id/history : Fetch historical telemetry with P50/P95/P99 latency distribution.
+ * 
+ * 3. Which functions/handlers it contains:
+ *    - `validateEndpointInput(body, isUpdate)` : SSRF guard, field validation, and AES-256 header encryption.
+ *    - Route handlers for GET, POST, PUT, DELETE, check/probe, and history.
+ * 
+ * 4. How it communicates with other files:
+ *    - Uses `prisma` from `../lib/prisma`.
+ *    - Uses `validateUrlForMonitoring` from `../utils/urlValidator` (SSRF protection).
+ *    - Uses `executeProbe` from `../services/probeService`.
+ *    - Uses `encrypt`/`decrypt` from `../utils/encryption`.
+ *    - Uses `probeLimiter` from `../middleware/rateLimiter`.
+ *    - Uses `optionalAuth` from `../middleware/authMiddleware`.
+ * 
+ * 5. Why this chosen approach is appropriate:
+ *    - Preserves security hardening (SSRF, rate-limiting, encrypted headers).
+ *    - Unifies both `/check` and `/probe` routes for cross-client compatibility.
+ */
+
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { validateUrlForMonitoring } = require('../utils/urlValidator');
@@ -8,6 +42,7 @@ const { optionalAuth } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 router.use(optionalAuth);
+
 const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 const allowedFields = [
   'name',
@@ -97,6 +132,8 @@ async function validateEndpointInput(body, isUpdate = false) {
   return { data };
 }
 
+// GET /api/endpoints
+// Lists all registered API endpoints with latest check, uptime %, and open incident status
 router.get('/', async (req, res) => {
   try {
     const { active, search } = req.query;
@@ -122,7 +159,13 @@ router.get('/', async (req, res) => {
         },
         incidents: {
           where: { status: 'OPEN' },
-          take: 1,
+          take: 5,
+        },
+        _count: {
+          select: {
+            integrations: true,
+            versions: true,
+          },
         },
       },
     });
@@ -146,6 +189,7 @@ router.get('/', async (req, res) => {
         expectedStatus: ep.expectedStatus,
         createdAt: ep.createdAt,
         updatedAt: ep.updatedAt,
+        healthChecks: ep.healthChecks, // Preserved for Dashboard compatibility
         latestCheck: latestCheck
           ? {
               id: latestCheck.id,
@@ -158,6 +202,8 @@ router.get('/', async (req, res) => {
           : null,
         uptime,
         hasOpenIncident: ep.incidents && ep.incidents.length > 0,
+        incidents: ep.incidents,
+        _count: ep._count,
       };
     });
 
@@ -168,6 +214,7 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/endpoints/:id
 router.get('/:id', async (req, res) => {
   try {
     const endpoint = await prisma.aPIEndpoint.findUnique({
@@ -184,6 +231,9 @@ router.get('/:id', async (req, res) => {
         versions: {
           orderBy: { createdAt: 'desc' },
         },
+        integrations: {
+          orderBy: { createdAt: 'desc' },
+        },
       },
     });
     if (!endpoint) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
@@ -197,6 +247,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// POST /api/endpoints
 router.post('/', async (req, res) => {
   const result = await validateEndpointInput(req.body);
   if (result.error) return res.status(400).json({ success: false, message: result.error });
@@ -235,6 +286,7 @@ router.post('/', async (req, res) => {
   }
 });
 
+// PUT /api/endpoints/:id
 router.put('/:id', async (req, res) => {
   const result = await validateEndpointInput(req.body, true);
   if (result.error) return res.status(400).json({ success: false, message: result.error });
@@ -253,6 +305,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// DELETE /api/endpoints/:id
 router.delete('/:id', async (req, res) => {
   try {
     const existing = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id }, select: { id: true } });
@@ -266,6 +319,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// POST /api/endpoints/:id/check (Standard probe handler)
 router.post('/:id/check', probeLimiter, async (req, res) => {
   try {
     const endpoint = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id } });
@@ -285,10 +339,33 @@ router.post('/:id/check', probeLimiter, async (req, res) => {
   }
 });
 
-// ==============================================================================
+// POST /api/endpoints/:id/probe (Alias supporting failure probe response format)
+router.post('/:id/probe', probeLimiter, async (req, res) => {
+  try {
+    const endpoint = await prisma.aPIEndpoint.findUnique({ where: { id: req.params.id } });
+    if (!endpoint) return res.status(404).json({ success: false, message: 'API endpoint not found.' });
+
+    const probeResult = await executeProbe(endpoint);
+    res.status(200).json({
+      success: true,
+      data: {
+        healthCheck: probeResult.check,
+        incident: probeResult.incident || null,
+        isHealthy: probeResult.check.isHealthy,
+        latency: `${probeResult.check.latency} ms`,
+        statusCode: probeResult.check.statusCode,
+      },
+      message: probeResult.check.isHealthy
+        ? `Probe passed successfully with HTTP ${probeResult.check.statusCode} (${probeResult.check.latency}ms)`
+        : `Probe failed: ${probeResult.check.errorMessage || 'HTTP Error'}`,
+    });
+  } catch (error) {
+    console.error('Manual probe failed:', error.message);
+    res.status(500).json({ success: false, message: error.message || 'Failed to execute manual probe.' });
+  }
+});
+
 // GET /api/endpoints/:id/history
-// Retrieves historical check logs, uptime %, error rate, and P50/P95/P99 latency
-// ==============================================================================
 router.get('/:id/history', async (req, res) => {
   try {
     const { id } = req.params;

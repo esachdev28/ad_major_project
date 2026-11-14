@@ -395,7 +395,6 @@ paths:
                           {ep.versions.map((ver) => (
                             <div
                               key={ver.id}
-                              onClick={() => handleInspectVersion(ver.id)}
                               style={{
                                 display: 'flex',
                                 justifyContent: 'space-between',
@@ -404,10 +403,14 @@ paths:
                                 backgroundColor: selectedVersion?.id === ver.id ? '#1d4ed833' : '#0f172a',
                                 border: selectedVersion?.id === ver.id ? '1px solid #3b82f6' : '1px solid #334155',
                                 borderRadius: '6px',
-                                cursor: 'pointer',
                               }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                              <button
+                                type="button"
+                                className="contract-version-button"
+                                onClick={() => handleInspectVersion(ver.id)}
+                                aria-pressed={selectedVersion?.id === ver.id}
+                              >
                                 <span style={{ fontWeight: 700, color: '#38bdf8', fontSize: '0.85rem' }}>
                                   v{ver.version}
                                 </span>
@@ -425,17 +428,14 @@ paths:
                                 <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
                                   {ver.title || 'OpenAPI Spec'}
                                 </span>
-                              </div>
+                              </button>
 
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                 <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
                                   {new Date(ver.createdAt).toLocaleDateString()}
                                 </span>
                                 <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteVersion(ver.id, ver.version);
-                                  }}
+                                  onClick={() => handleDeleteVersion(ver.id, ver.version)}
                                   style={{
                                     background: 'none',
                                     border: 'none',
