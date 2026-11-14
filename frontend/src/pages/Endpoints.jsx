@@ -247,6 +247,7 @@ export default function Endpoints({ onEndpointsChanged }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'healthy' | 'failing'
   const [probingId, setProbingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   async function loadEndpoints() {
     setLoading(true);
@@ -298,11 +299,15 @@ export default function Endpoints({ onEndpointsChanged }) {
   }
 
   async function removeEndpoint(endpoint) {
+    if (deletingId) return;
+
     const confirmed = window.confirm(
       `Delete "${endpoint.name}"? Associated health checks, incidents, and API versions may also be deleted.`
     );
     if (!confirmed) return;
     setMessage('');
+    setError('');
+    setDeletingId(endpoint.id);
     try {
       await deleteEndpoint(endpoint.id);
       setMessage('API endpoint deleted.');
@@ -310,6 +315,8 @@ export default function Endpoints({ onEndpointsChanged }) {
       onEndpointsChanged?.();
     } catch (requestError) {
       setError(requestError.message || 'Unable to delete API endpoint.');
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -454,8 +461,12 @@ export default function Endpoints({ onEndpointsChanged }) {
                       <button className="endpoint-secondary" onClick={() => openEdit(endpoint)}>
                         Edit
                       </button>
-                      <button className="endpoint-danger" onClick={() => removeEndpoint(endpoint)}>
-                        Delete
+                      <button
+                        className="endpoint-danger"
+                        disabled={deletingId !== null}
+                        onClick={() => removeEndpoint(endpoint)}
+                      >
+                        {deletingId === endpoint.id ? 'Deleting...' : 'Delete'}
                       </button>
                     </div>
                   </article>
