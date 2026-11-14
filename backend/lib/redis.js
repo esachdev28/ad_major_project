@@ -12,6 +12,9 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const redis = new Redis(redisUrl, {
   maxRetriesPerRequest: 3,
   retryStrategy(times) {
+    if (times > 3) {
+      return null; // Gracefully stop retrying if Redis is not deployed
+    }
     const delay = Math.min(times * 200, 3000);
     return delay;
   },
