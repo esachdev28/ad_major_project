@@ -190,6 +190,7 @@ export default function Endpoints({ onEndpointsChanged }) {
       const result = await getEndpoints();
       setEndpoints(result.data || []);
     } catch (requestError) {
+      setEndpoints([]);
       setError(requestError.message || 'Unable to load API endpoints. Please try again.');
     } finally {
       setLoading(false);
@@ -338,8 +339,10 @@ export default function Endpoints({ onEndpointsChanged }) {
         <section className="panel-card">
           {loading ? (
             <p className="endpoint-state">Loading API endpoints...</p>
-          ) : filtered.length === 0 ? (
-            <p className="endpoint-state">No matching API endpoints found.</p>
+          ) : error ? null : filtered.length === 0 && endpoints.length > 0 ? (
+            <p className="endpoint-state">No endpoints match your search or status filter.</p>
+          ) : endpoints.length === 0 ? (
+            <p className="endpoint-state">No API endpoints registered yet. Add your first endpoint.</p>
           ) : (
             <div className="endpoint-list">
               {filtered.map((endpoint) => {
@@ -372,7 +375,7 @@ export default function Endpoints({ onEndpointsChanged }) {
                         <p className="endpoint-description">{endpoint.description}</p>
                       )}
                       <p className="endpoint-date">
-                        Uptime: {endpoint.uptime ?? 100}% · Expected HTTP {endpoint.expectedStatus || 200} · Interval {endpoint.interval || 60}s
+                        Uptime: {endpoint.uptime ?? '—'}{endpoint.uptime != null ? '%' : ''} · Expected HTTP {endpoint.expectedStatus || 200} · Interval {endpoint.interval || 60}s
                       </p>
                     </div>
                     <div className="endpoint-actions">

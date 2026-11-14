@@ -59,7 +59,9 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
 
   // State: registered endpoints and incidents from PostgreSQL
   const [endpoints, setEndpoints] = useState([]);
+  const [endpointsError, setEndpointsError] = useState('');
   const [incidents, setIncidents] = useState([]);
+  const [incidentsError, setIncidentsError] = useState('');
 
   // State: connection indicators ('checking' | 'online' | 'offline')
   const [backendStatus, setBackendStatus] = useState('checking');
@@ -127,6 +129,7 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
         setDataSource(statsResult.value.dataSource || 'database');
       } else {
         setStats(null);
+        setDataSource('');
         if (healthResult.status === 'fulfilled') {
           const reason =
             statsResult.reason?.message ||
@@ -139,22 +142,42 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
       // 4. Process analytics
       if (analyticsResult.status === 'fulfilled' && analyticsResult.value?.success) {
         setAnalytics(analyticsResult.value.data);
+      } else {
+        setAnalytics(null);
       }
 
       // 5. Process live endpoints
       if (endpointsResult.status === 'fulfilled' && endpointsResult.value?.success) {
         setEndpoints(endpointsResult.value.data || []);
+        setEndpointsError('');
+      } else {
+        setEndpoints([]);
+        setEndpointsError(
+          endpointsResult.reason?.message ||
+            endpointsResult.value?.message ||
+            'Unable to load registered endpoints.'
+        );
       }
 
       // 6. Process live incidents
       if (incidentsResult.status === 'fulfilled' && incidentsResult.value?.success) {
         setIncidents(incidentsResult.value.data || []);
+        setIncidentsError('');
+      } else {
+        setIncidents([]);
+        setIncidentsError(
+          incidentsResult.reason?.message ||
+            incidentsResult.value?.message ||
+            'Unable to load incidents.'
+        );
       }
     } catch (err) {
       setBackendStatus('offline');
       setDbStatus('offline');
       setError(err.message || 'An unexpected error occurred while connecting to the backend.');
       setStats(null);
+      setAnalytics(null);
+      setDataSource('');
     } finally {
       setIsLoading(false);
     }
@@ -363,19 +386,6 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
   const series = analytics?.series || [];
   const maxLatency = Math.max(...series.map((s) => s.latency || 100), 500);
 
-  // Fallback sample items for initial zero-database preview
-  const displayEndpoints = endpoints.length > 0 ? endpoints : [
-    { id: 'mock-1', method: 'GET', url: 'https://api.sentinel.dev/v1/users', name: 'User Service', isMock: true, healthChecks: [{ isHealthy: true, latency: 42 }] },
-    { id: 'mock-2', method: 'POST', url: 'https://api.sentinel.dev/v1/auth', name: 'Auth Gateway', isMock: true, healthChecks: [{ isHealthy: true, latency: 118 }] },
-    { id: 'mock-3', method: 'GET', url: 'https://api.sentinel.dev/v1/orders', name: 'Order Service', isMock: true, healthChecks: [{ isHealthy: true, latency: 85 }] },
-    { id: 'mock-4', method: 'POST', url: 'https://api.sentinel.dev/v1/payments', name: 'Payment Core', isMock: true, healthChecks: [{ isHealthy: false, latency: 1420 }] }
-  ];
-
-  const displayIncidents = incidents.length > 0 ? incidents : [
-    { id: 'inc-1', title: 'HTTP 504 Gateway Timeout', status: 'OPEN', createdAt: new Date().toISOString(), endpoint: { name: 'Payment Core' }, isMock: true },
-    { id: 'inc-2', title: 'Latency anomaly detected (>1200ms)', status: 'RESOLVED', createdAt: new Date(Date.now() - 3600000).toISOString(), endpoint: { name: 'Warehouse API' }, isMock: true }
-  ];
-
   return (
     <div className="main-wrapper">
       {/* Top Header */}
@@ -452,13 +462,13 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
         <div className="demo-banner" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="demo-banner-content">
             <span className="demo-tag" style={dataSource === 'database' ? { backgroundColor: '#10b981' } : {}}>
-              {dataSource ? `${dataSource.toUpperCase()} MODE` : 'DATABASE MODE'}
+              {dataSource ? `${dataSource.toUpperCase()} MODE` : backendStatus === 'offline' ? 'CONNECTION OFFLINE' : 'DATABASE MODE'}
             </span>
             <p>
               {dataSource === 'database' ? (
                 <>Live metrics from <strong>PostgreSQL</strong> ({stats?.totalChecks || 0} probes logged).</>
               ) : (
-                <>All metrics below are delivered by Express (<code>GET /api/dashboard/stats</code>).</>
+                <>{backendStatus === 'offline' ? 'Live dashboard data is unavailable until the backend responds.' : <>Waiting for live metrics from Express (<code>GET /api/dashboard/stats</code>).</>}</>
               )}
             </p>
           </div>
@@ -532,7 +542,7 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
             value={stats?.averageLatency}
             icon="⚡"
             colorVariant="amber"
-            subtitle={`P95: ${analytics?.percentiles?.p95 || 0} ms`}
+            subtitle={series.length ? `P95: ${analytics?.percentiles?.p95 ?? '—'} ms` : 'No telemetry yet'}
             isLoading={isLoading}
           />
         </section>
@@ -545,16 +555,16 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
             </h2>
             <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
               <span style={{ color: '#94a3b8' }}>
-                P50: <strong style={{ color: '#38bdf8' }}>{analytics?.percentiles?.p50 || 0} ms</strong>
+                P50: <strong style={{ color: '#38bdf8' }}>{series.length ? `${analytics?.percentiles?.p50 ?? '—'} ms` : '—'}</strong>
               </span>
               <span style={{ color: '#94a3b8' }}>
-                P95: <strong style={{ color: '#f59e0b' }}>{analytics?.percentiles?.p95 || 0} ms</strong>
+                P95: <strong style={{ color: '#f59e0b' }}>{series.length ? `${analytics?.percentiles?.p95 ?? '—'} ms` : '—'}</strong>
               </span>
               <span style={{ color: '#94a3b8' }}>
-                P99: <strong style={{ color: '#f43f5e' }}>{analytics?.percentiles?.p99 || 0} ms</strong>
+                P99: <strong style={{ color: '#f43f5e' }}>{series.length ? `${analytics?.percentiles?.p99 ?? '—'} ms` : '—'}</strong>
               </span>
               <span style={{ color: '#94a3b8' }}>
-                Error Rate: <strong style={{ color: (analytics?.errorRate || 0) > 0 ? '#f87171' : '#34d399' }}>{analytics?.errorRate || 0}%</strong>
+                Error Rate: <strong style={{ color: (analytics?.errorRate || 0) > 0 ? '#f87171' : '#34d399' }}>{series.length ? `${analytics?.errorRate ?? '—'}%` : '—'}</strong>
               </span>
             </div>
           </div>
@@ -656,7 +666,13 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {displayEndpoints.map((ep) => {
+                    {isLoading ? (
+                      <tr><td colSpan="5">Loading endpoints...</td></tr>
+                    ) : endpointsError ? (
+                      <tr><td colSpan="5" role="alert">{endpointsError}</td></tr>
+                    ) : endpoints.length === 0 ? (
+                      <tr><td colSpan="5">No API endpoints registered yet.</td></tr>
+                    ) : endpoints.map((ep) => {
                       const latestCheck = (ep.healthChecks && ep.healthChecks[0]) || ep.latestCheck;
                       const isHealthy = latestCheck ? latestCheck.isHealthy : null;
                       const latencyStr = latestCheck ? `${latestCheck.latency} ms` : '—';
@@ -682,8 +698,8 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
                             <button
                               className="btn-action btn-probe"
                               onClick={() => handleProbe(ep.id, ep.name)}
-                              disabled={probingId === ep.id || ep.isMock}
-                              title={ep.isMock ? 'Seed database to probe live endpoints' : 'Execute active health probe'}
+                              disabled={probingId === ep.id}
+                              title="Execute active health probe"
                             >
                               {probingId === ep.id ? 'Pinging...' : '⚡ Probe'}
                             </button>
@@ -709,7 +725,13 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
                 </div>
 
                 <div className="activity-list">
-                  {displayIncidents.map((act) => (
+                  {isLoading ? (
+                    <p className="endpoint-state">Loading incidents...</p>
+                  ) : incidentsError ? (
+                    <p className="endpoint-error" role="alert">{incidentsError}</p>
+                  ) : incidents.length === 0 ? (
+                    <p className="endpoint-state">No incidents recorded.</p>
+                  ) : incidents.map((act) => (
                     <div key={act.id} className="activity-item">
                       <div className={`activity-icon-bullet ${act.status === 'OPEN' ? 'bullet-red' : 'bullet-green'}`} />
                       <div style={{ flex: 1 }}>
@@ -719,7 +741,7 @@ export default function Dashboard({ refreshKey = 0, onNavigateToEndpoints }) {
                         </div>
                         <div className="activity-time">{new Date(act.createdAt).toLocaleString()}</div>
                       </div>
-                      {act.status === 'OPEN' && !act.isMock && (
+                      {act.status === 'OPEN' && (
                         <button
                           className="btn-action btn-resolve"
                           onClick={() => handleResolveIncident(act.id)}

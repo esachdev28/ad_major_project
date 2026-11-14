@@ -16,9 +16,11 @@ export default function Incidents() {
   const [severityFilter, setSeverityFilter] = useState('ALL');
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [alert, setAlert] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
+    setLoadError('');
     try {
       const [healthRes, incRes] = await Promise.allSettled([
         checkHealth(),
@@ -33,10 +35,13 @@ export default function Incidents() {
 
       if (incRes.status === 'fulfilled' && incRes.value.success) {
         setIncidents(incRes.value.data || []);
+      } else {
+        setIncidents([]);
+        setLoadError(incRes.reason?.message || incRes.value?.message || 'Unable to load incidents.');
       }
     } catch (err) {
       setBackendStatus('offline');
-      setAlert({ type: 'error', message: err.message || 'Failed to load incidents' });
+      setLoadError(err.message || 'Failed to load incidents.');
     } finally {
       setIsLoading(false);
     }
@@ -147,6 +152,16 @@ export default function Incidents() {
           </div>
         )}
 
+        {loadError && (
+          <div className="backend-alert" role="alert">
+            <span>⚠️</span>
+            <div>
+              <h4>Unable to load incidents</h4>
+              <p>{loadError}</p>
+            </div>
+          </div>
+        )}
+
         {/* Filter Controls */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -205,10 +220,14 @@ export default function Incidents() {
             <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
               Loading incidents...
             </div>
+          ) : loadError ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#fca5a5' }}>
+              Incident data could not be loaded. Use Refresh to try again.
+            </div>
           ) : incidents.length === 0 ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
               <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>No incidents match your filter</p>
-              <p style={{ fontSize: '0.85rem' }}>All monitored endpoints are currently operating within healthy thresholds.</p>
+              <p style={{ fontSize: '0.85rem' }}>No incident records match the selected filters.</p>
             </div>
           ) : (
             <table className="endpoints-table">
