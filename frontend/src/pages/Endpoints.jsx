@@ -41,11 +41,70 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
 
   async function submit(event) {
     event.preventDefault();
+
+    const name = form.name.trim();
+    const url = form.url.trim();
+    if (!name) {
+      setError('API name is required.');
+      return;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      setError('Enter a valid API URL.');
+      return;
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      setError('API URL must use HTTP or HTTPS.');
+      return;
+    }
+
+    if (form.headers.trim()) {
+      try {
+        const headers = JSON.parse(form.headers);
+        if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
+          setError('Custom headers must be a JSON object.');
+          return;
+        }
+      } catch {
+        setError('Custom headers must be valid JSON.');
+        return;
+      }
+    }
+
+    const expectedStatus = Number(form.expectedStatus);
+    const interval = Number(form.interval);
+    const timeout = Number(form.timeout);
+    if (!Number.isInteger(expectedStatus) || expectedStatus < 100 || expectedStatus > 599) {
+      setError('Expected status code must be a whole number from 100 to 599.');
+      return;
+    }
+    if (!Number.isInteger(interval) || interval < 5) {
+      setError('Monitoring interval must be a whole number of at least 5 seconds.');
+      return;
+    }
+    if (!Number.isInteger(timeout) || timeout < 100 || timeout > 30000) {
+      setError('Timeout must be a whole number from 100 to 30000 milliseconds.');
+      return;
+    }
+
     setSaving(true);
     setError('');
     try {
-      if (endpoint) await updateEndpoint(endpoint.id, form);
-      else await createEndpoint(form);
+      const endpointData = {
+        ...form,
+        name,
+        url,
+        description: form.description.trim(),
+        expectedStatus,
+        interval,
+        timeout,
+        headers: form.headers.trim(),
+      };
+      if (endpoint) await updateEndpoint(endpoint.id, endpointData);
+      else await createEndpoint(endpointData);
       onSaved(
         endpoint
           ? 'API endpoint updated.'
@@ -105,8 +164,10 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
               Expected Status Code
               <input
                 type="number"
+                required
                 min="100"
                 max="599"
+                step="1"
                 value={form.expectedStatus}
                 onChange={(event) => setForm({ ...form, expectedStatus: Number(event.target.value) })}
               />
@@ -117,7 +178,9 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
               Interval (seconds)
               <input
                 type="number"
+                required
                 min="5"
+                step="1"
                 value={form.interval}
                 onChange={(event) => setForm({ ...form, interval: Number(event.target.value) })}
               />
@@ -126,8 +189,10 @@ function EndpointForm({ endpoint, onClose, onSaved }) {
               Timeout (ms)
               <input
                 type="number"
+                required
                 min="100"
                 max="30000"
+                step="1"
                 value={form.timeout}
                 onChange={(event) => setForm({ ...form, timeout: Number(event.target.value) })}
               />
