@@ -11,7 +11,7 @@ services:
     env: node
     plan: free
     region: singapore
-    buildCommand: "cd frontend && npm install && npm run build && cd ../backend && npm install && npx prisma generate"
+    buildCommand: "cd frontend && npm install --include=dev && npm run build && cd ../backend && npm install && npx prisma generate"
     startCommand: "cd backend && npx prisma db push && node prisma/seed.js && node server.js"
     envVars:
       - key: DATABASE_URL
