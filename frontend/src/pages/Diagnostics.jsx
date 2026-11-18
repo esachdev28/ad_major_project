@@ -10,7 +10,7 @@ import {
   checkHealth,
 } from '../services/api';
 
-export default function Diagnostics({ incidentContext }) {
+export default function Diagnostics({ incidentContext, onReturnToExplorer }) {
   const [aiStatus, setAiStatus] = useState(null);
   const [mcpTools, setMcpTools] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
@@ -332,6 +332,17 @@ export default function Diagnostics({ incidentContext }) {
                     {activeReport.summary}
                   </div>
                 </div>
+
+                {incidentContext && onReturnToExplorer && (
+                  <button
+                    type="button"
+                    className="endpoint-secondary"
+                    style={{ marginBottom: '1.25rem' }}
+                    onClick={() => onReturnToExplorer(activeReport)}
+                  >
+                    View this explanation in the 3D dependency explorer
+                  </button>
+                )}
 
                 {/* Verified Facts vs Hypotheses (Evidence Integrity) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>

@@ -14,7 +14,7 @@ import {
 
 const DependencyGraph3D = lazy(() => import('../components/DependencyGraph3D'));
 
-export default function Dependencies({ onRequestIncidentInvestigation }) {
+export default function Dependencies({ incidentContext, aiReport, onRequestIncidentInvestigation }) {
   const [services, setServices] = useState([]);
   const [integrations, setIntegrations] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
@@ -24,12 +24,12 @@ export default function Dependencies({ onRequestIncidentInvestigation }) {
   const [alert, setAlert] = useState(null);
 
   // Impact Analysis State
-  const [selectedServiceId, setSelectedServiceId] = useState('');
+  const [selectedServiceId, setSelectedServiceId] = useState(incidentContext?.serviceId || '');
   const [baselineVersionId, setBaselineVersionId] = useState('');
   const [targetVersionId, setTargetVersionId] = useState('');
   const [impactReport, setImpactReport] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [graphView, setGraphView] = useState('2d');
+  const [graphView, setGraphView] = useState(aiReport ? '3d' : '2d');
 
   // Register Service Modal
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
@@ -71,8 +71,9 @@ export default function Dependencies({ onRequestIncidentInvestigation }) {
         const edges = graphRes.value.data.integrations || [];
         setServices(svcs);
         setIntegrations(edges);
-        if (svcs.length > 0 && !selectedServiceId) {
-          setSelectedServiceId(svcs[0].id);
+        if (svcs.length > 0 && (!selectedServiceId || !svcs.some((service) => service.id === selectedServiceId))) {
+          const contextServiceExists = svcs.some((service) => service.id === incidentContext?.serviceId);
+          setSelectedServiceId(contextServiceExists ? incidentContext.serviceId : svcs[0].id);
         }
         if (svcs.length >= 2 && !linkForm.providerId) {
           setLinkForm((prev) => ({
@@ -95,7 +96,7 @@ export default function Dependencies({ onRequestIncidentInvestigation }) {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedServiceId, linkForm.providerId]);
+  }, [incidentContext?.serviceId, selectedServiceId, linkForm.providerId]);
 
   useEffect(() => {
     loadData();
@@ -423,6 +424,7 @@ export default function Dependencies({ onRequestIncidentInvestigation }) {
                   selectedServiceId={selectedServiceId}
                   onSelectService={selectService}
                   onRequestInvestigation={onRequestIncidentInvestigation}
+                  aiReport={aiReport}
                 />
               </Suspense>
             )

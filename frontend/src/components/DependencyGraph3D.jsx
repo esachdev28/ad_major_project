@@ -58,6 +58,113 @@ function ServiceLabel({ name, health }) {
   );
 }
 
+function drawWrappedText(context, value, x, y, maxWidth, lineHeight, maxLines) {
+  const words = String(value || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  let wasTruncated = false;
+
+  for (let index = 0; index < words.length; index += 1) {
+    const candidate = line ? `${line} ${words[index]}` : words[index];
+    if (context.measureText(candidate).width > maxWidth && line) {
+      lines.push(line);
+      line = words[index];
+      if (lines.length === maxLines) {
+        wasTruncated = true;
+        break;
+      }
+    } else {
+      line = candidate;
+    }
+  }
+
+  if (line && lines.length < maxLines) lines.push(line);
+  else if (line) wasTruncated = true;
+
+  if (wasTruncated && lines.length > 0) lines[lines.length - 1] += '…';
+  lines.forEach((text, index) => context.fillText(text, x, y + index * lineHeight, maxWidth));
+  return y + lines.length * lineHeight;
+}
+
+function createAssistantTexture(report) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 1280;
+  const context = canvas.getContext('2d');
+
+  context.fillStyle = '#101827';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = '#64748b';
+  context.lineWidth = 5;
+  context.strokeRect(12, 12, canvas.width - 24, canvas.height - 24);
+
+  const left = 56;
+  const maxWidth = canvas.width - 112;
+  let y = 78;
+  context.fillStyle = '#f8fafc';
+  context.font = '700 38px Arial, sans-serif';
+  context.fillText(
+    report.provider === 'nvidia-nim' ? 'NVIDIA NIM EXPLANATION' : 'EVIDENCE-BASED FALLBACK',
+    left,
+    y
+  );
+  y += 42;
+  context.fillStyle = '#94a3b8';
+  context.font = '24px Arial, sans-serif';
+  context.fillText(`${report.provider || 'Diagnostics'} · ${report.model || 'Report'}`, left, y);
+
+  const drawSectionTitle = (title, color) => {
+    y += 54;
+    context.fillStyle = color;
+    context.font = '700 28px Arial, sans-serif';
+    context.fillText(title, left, y);
+    y += 40;
+    context.fillStyle = '#e2e8f0';
+    context.font = '25px Arial, sans-serif';
+  };
+
+  drawSectionTitle('Summary', '#93c5fd');
+  y = drawWrappedText(context, report.summary, left, y, maxWidth, 32, 3);
+
+  const drawList = (title, items, color) => {
+    drawSectionTitle(title, color);
+    const visibleItems = (items || []).slice(0, 2);
+    if (visibleItems.length === 0) {
+      y = drawWrappedText(context, 'No details recorded.', left, y, maxWidth, 32, 1);
+      return;
+    }
+
+    visibleItems.forEach((item) => {
+      context.fillStyle = color;
+      context.fillText('•', left, y);
+      context.fillStyle = '#e2e8f0';
+      y = drawWrappedText(context, item, left + 28, y, maxWidth - 28, 32, 2) + 10;
+    });
+    if ((items || []).length > visibleItems.length) {
+      context.fillStyle = '#94a3b8';
+      context.font = '22px Arial, sans-serif';
+      context.fillText('More details are available in the accessible report below.', left, y);
+    }
+  };
+
+  drawList('Verified facts', report.verifiedFacts, '#34d399');
+  drawList('Possible causes (unconfirmed)', report.hypotheses, '#fbbf24');
+  drawList('Suggested next steps', report.recommendations, '#93c5fd');
+  return new CanvasTexture(canvas);
+}
+
+function VRIncidentAssistantPanel({ report, position }) {
+  const texture = useMemo(() => createAssistantTexture(report), [report]);
+  useEffect(() => () => texture.dispose(), [texture]);
+
+  return (
+    <mesh position={position}>
+      <planeGeometry args={[3.8, 4.75]} />
+      <meshBasicMaterial map={texture} toneMapped={false} />
+    </mesh>
+  );
+}
+
 function ServiceNode({ node, position, isSelected, onSelect }) {
   const health = getServiceHealth(node);
   const { gl } = useThree();
@@ -144,10 +251,10 @@ function GraphControls() {
   return null;
 }
 
-function DependencyScene({ nodes, edges, positions, selectedServiceId, onSelectService }) {
+function DependencyScene({ nodes, edges, positions, selectedServiceId, onSelectService, aiReport }) {
   const isInVR = useXR((state) => state.session?.mode === 'immersive-vr');
   const halfWidth = Math.max(...Array.from(positions.values()).map(([x]) => Math.abs(x)), 1);
-  const vrScale = Math.min(1, 6 / halfWidth);
+  const vrScale = Math.min(1, (aiReport ? 3.2 : 6) / halfWidth);
 
   return (
     <>
@@ -156,7 +263,7 @@ function DependencyScene({ nodes, edges, positions, selectedServiceId, onSelectS
         <GraphControls />
       </IfInSessionMode>
       <group
-        position={isInVR ? [0, 1.5, -4] : [0, 0, 0]}
+        position={isInVR ? (aiReport ? [-3.4, 1.5, -4] : [0, 1.5, -4]) : [0, 0, 0]}
         scale={isInVR ? vrScale : 1}
       >
         {edges.map((edge) => (
@@ -172,6 +279,9 @@ function DependencyScene({ nodes, edges, positions, selectedServiceId, onSelectS
           />
         ))}
       </group>
+      {isInVR && aiReport && (
+        <VRIncidentAssistantPanel report={aiReport} position={[2.5, 2, -4]} />
+      )}
     </>
   );
 }
@@ -321,6 +431,7 @@ function ServiceDetails({ service, nodes, edges, onSelect, onRequestInvestigatio
                 <button
                   type="button"
                   onClick={() => onRequestInvestigation?.({
+                    serviceId: service.id,
                     endpointId: service.endpoint.id,
                     incidentId: incident.id,
                     serviceName: service.name,
@@ -360,7 +471,7 @@ function ServiceDetails({ service, nodes, edges, onSelect, onRequestInvestigatio
  * Node positions come from the 2D graph layout, so the service topology
  * is not calculated a second time for this view.
  */
-export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onSelectService, onRequestInvestigation }) {
+export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onSelectService, onRequestInvestigation, aiReport }) {
   const positions = useMemo(() => getNodePositions(nodes), [nodes]);
   const selectedService = nodes.find((node) => node.id === selectedServiceId);
   const xrStore = useMemo(() => createXRStore({ offerSession: false, emulate: false }), []);
@@ -445,6 +556,7 @@ export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onS
               positions={positions}
               selectedServiceId={selectedServiceId}
               onSelectService={onSelectService}
+              aiReport={aiReport}
             />
           </XR>
         </Canvas>
@@ -467,6 +579,35 @@ export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onS
         onSelect={onSelectService}
         onRequestInvestigation={onRequestInvestigation}
       />
+      {aiReport && (
+        <section className="dependency-3d-ai-report" aria-live="polite" aria-labelledby="dependency-3d-ai-report-title">
+          <div className="dependency-3d-ai-report-heading">
+            <div>
+              <p>AI Incident Assistant</p>
+              <h4 id="dependency-3d-ai-report-title">{aiReport.endpoint?.name || 'Selected service'} explanation</h4>
+            </div>
+            <span>{aiReport.provider} · {aiReport.model}</span>
+          </div>
+          <p className="dependency-3d-ai-report-summary">{aiReport.summary}</p>
+          <div className="dependency-3d-ai-report-columns">
+            <div>
+              <h5>Verified facts</h5>
+              <ul>{aiReport.verifiedFacts.map((fact, index) => <li key={index}>{fact}</li>)}</ul>
+            </div>
+            <div>
+              <h5>Possible causes · unconfirmed</h5>
+              <ul>{aiReport.hypotheses.map((hypothesis, index) => <li key={index}>{hypothesis}</li>)}</ul>
+            </div>
+            <div>
+              <h5>Suggested next steps</h5>
+              <ul>{aiReport.recommendations.map((recommendation, index) => <li key={index}>{recommendation}</li>)}</ul>
+            </div>
+          </div>
+          <p className="dependency-3d-ai-report-note">
+            The VR panel summarizes this report. Possible causes are hypotheses and should be checked against the verified facts.
+          </p>
+        </section>
+      )}
       <p className="dependency-3d-controls-hint">
         Drag to rotate · Scroll or pinch to zoom · Right-drag or two-finger drag to move · Tap or click a node to inspect it
       </p>

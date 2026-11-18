@@ -38,6 +38,7 @@ export default function App() {
   const [activeItem, setActiveItem] = useState('Dashboard');
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const [diagnosticsContext, setDiagnosticsContext] = useState(null);
+  const [aiIncidentReport, setAiIncidentReport] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
@@ -87,13 +88,21 @@ export default function App() {
         <Contracts />
       ) : activeItem === 'Dependencies' ? (
         <Dependencies
+          incidentContext={diagnosticsContext}
+          aiReport={aiIncidentReport}
           onRequestIncidentInvestigation={(context) => {
             setDiagnosticsContext(context);
             setActiveItem('AI Diagnostics');
           }}
         />
       ) : activeItem === 'AI Diagnostics' ? (
-        <Diagnostics incidentContext={diagnosticsContext} />
+        <Diagnostics
+          incidentContext={diagnosticsContext}
+          onReturnToExplorer={(report) => {
+            setAiIncidentReport(report);
+            setActiveItem('Dependencies');
+          }}
+        />
       ) : (
         <Dashboard refreshKey={dashboardRefreshKey} onNavigateToEndpoints={() => setActiveItem('API Endpoints')} />
       )}
