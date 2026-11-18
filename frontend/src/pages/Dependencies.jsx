@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useMemo } from 'react';
 import Header from '../components/Header';
 import {
   getDependencyGraph,
@@ -11,6 +11,8 @@ import {
   getContracts,
   checkHealth,
 } from '../services/api';
+
+const DependencyGraph3D = lazy(() => import('../components/DependencyGraph3D'));
 
 export default function Dependencies() {
   const [services, setServices] = useState([]);
@@ -27,6 +29,7 @@ export default function Dependencies() {
   const [targetVersionId, setTargetVersionId] = useState('');
   const [impactReport, setImpactReport] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [graphView, setGraphView] = useState('2d');
 
   // Register Service Modal
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
@@ -372,20 +375,52 @@ export default function Dependencies() {
           </div>
         )}
 
-        {/* Interactive Directed Dependency Graph SVG */}
+        {/* Dependency graph views use the same services and integration data. */}
         <div className="panel-card" style={{ marginBottom: '1.5rem', overflowX: 'auto' }}>
           <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 className="panel-title" style={{ margin: 0 }}>
               <span>🕸️</span> Directed Service Topology ({services.length} Services, {integrations.length} Edges)
             </h3>
-            <div style={{ display: 'flex', gap: '1rem', fontSize: '0.75rem', color: '#94a3b8' }}>
-              <span><strong style={{ color: '#3b82f6' }}>●</strong> Selected Target</span>
-              <span><strong style={{ color: '#ef4444' }}>●</strong> Direct Impact (Depth 1)</span>
-              <span><strong style={{ color: '#f59e0b' }}>●</strong> Transitive Impact (Depth 2+)</span>
+            <div className="dependency-graph-toolbar">
+              {graphView === '2d' && (
+                <div className="dependency-graph-legend">
+                  <span><strong style={{ color: '#3b82f6' }}>●</strong> Selected Target</span>
+                  <span><strong style={{ color: '#ef4444' }}>●</strong> Direct Impact (Depth 1)</span>
+                  <span><strong style={{ color: '#f59e0b' }}>●</strong> Transitive Impact (Depth 2+)</span>
+                </div>
+              )}
+              <div className="dependency-graph-view-toggle" role="group" aria-label="Dependency graph view">
+                <button
+                  type="button"
+                  className={graphView === '2d' ? 'active' : ''}
+                  aria-pressed={graphView === '2d'}
+                  onClick={() => setGraphView('2d')}
+                >
+                  2D Graph
+                </button>
+                <button
+                  type="button"
+                  className={graphView === '3d' ? 'active' : ''}
+                  aria-pressed={graphView === '3d'}
+                  onClick={() => setGraphView('3d')}
+                >
+                  3D View
+                </button>
+              </div>
             </div>
           </div>
 
-          {services.length === 0 ? (
+          {graphView === '3d' ? (
+            services.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
+                No services registered yet. Click &quot;+ Register Service&quot; to begin mapping dependencies.
+              </div>
+            ) : (
+              <Suspense fallback={<div style={{ minHeight: 220, display: 'grid', placeItems: 'center', color: '#94a3b8' }}>Loading 3D graph…</div>}>
+                <DependencyGraph3D nodes={graphLayout.nodes} edges={graphLayout.edges} />
+              </Suspense>
+            )
+          ) : services.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
               No services registered yet. Click &quot;+ Register Service&quot; to begin mapping dependencies.
             </div>
