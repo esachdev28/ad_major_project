@@ -14,7 +14,7 @@ import {
 
 const DependencyGraph3D = lazy(() => import('../components/DependencyGraph3D'));
 
-export default function Dependencies() {
+export default function Dependencies({ onRequestIncidentInvestigation }) {
   const [services, setServices] = useState([]);
   const [integrations, setIntegrations] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
@@ -422,6 +422,7 @@ export default function Dependencies() {
                   edges={graphLayout.edges}
                   selectedServiceId={selectedServiceId}
                   onSelectService={selectService}
+                  onRequestInvestigation={onRequestIncidentInvestigation}
                 />
               </Suspense>
             )

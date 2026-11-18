@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { createXRStore, IfInSessionMode, useXR, XR } from '@react-three/xr';
 import { CanvasTexture } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getServiceHealth, SERVICE_HEALTH_STATES } from '../utils/serviceHealth';
 import { checkWebXRSupport } from '../utils/webXRSupport';
+import { getIncidents } from '../services/api';
 import './DependencyGraph3D.css';
 
 function getNodePositions(nodes) {
@@ -175,14 +176,56 @@ function DependencyScene({ nodes, edges, positions, selectedServiceId, onSelectS
   );
 }
 
-function ServiceDetails({ service, nodes, edges, onSelect }) {
+function ServiceDetails({ service, nodes, edges, onSelect, onRequestInvestigation }) {
+  const [incidents, setIncidents] = useState([]);
+  const [isLoadingIncidents, setIsLoadingIncidents] = useState(false);
+  const [incidentError, setIncidentError] = useState('');
+
+  const loadIncidents = useCallback(async (endpointId = service?.endpoint?.id, isCurrent = () => true) => {
+    if (!endpointId) {
+      setIncidents([]);
+      setIncidentError('');
+      setIsLoadingIncidents(false);
+      return;
+    }
+
+    setIsLoadingIncidents(true);
+    setIncidents([]);
+    setIncidentError('');
+    try {
+      const result = await getIncidents({ endpointId });
+      if (isCurrent()) {
+        if (result.success) setIncidents(result.data || []);
+        else setIncidentError(result.message || 'Unable to load incidents for this service.');
+      }
+    } catch (error) {
+      if (isCurrent()) {
+        setIncidents([]);
+        setIncidentError(error.message || 'Unable to load incidents for this service.');
+      }
+    } finally {
+      if (isCurrent()) setIsLoadingIncidents(false);
+    }
+  }, [service?.endpoint?.id]);
+
+  useEffect(() => {
+    let isCurrentService = true;
+
+    async function fetchServiceIncidents() {
+      await loadIncidents(service?.endpoint?.id, () => isCurrentService);
+    }
+
+    fetchServiceIncidents();
+    return () => { isCurrentService = false; };
+  }, [service?.endpoint?.id, loadIncidents]);
+
   if (!service) {
     return <p className="dependency-3d-details-empty">Select a service node to inspect its details.</p>;
   }
 
   const health = getServiceHealth(service);
   const latestCheck = service.endpoint?.healthChecks?.[0];
-  const incidents = service.endpoint?.incidents || [];
+  const activeIncidents = incidents.filter((incident) => incident.status !== 'RESOLVED');
   const serviceNames = new Map(nodes.map((node) => [node.id, node.name]));
   const dependencies = edges
     .filter((edge) => edge.consumerId === service.id)
@@ -249,14 +292,63 @@ function ServiceDetails({ service, nodes, edges, onSelect }) {
           <span>Consumers</span>
           <strong>{consumers.length ? consumers.join(', ') : 'No consumers registered'}</strong>
         </div>
-        <div className="dependency-3d-detail-wide">
-          <span>Active incidents</span>
-          <strong>
-            {incidents.length
-              ? incidents.map((incident) => `${incident.title} (${incident.severity})`).join(', ')
-              : 'None'}
-          </strong>
-        </div>
+      </div>
+
+      <div className="dependency-3d-incidents" aria-live="polite">
+        <h5>Related incidents</h5>
+        {isLoadingIncidents ? (
+          <p>Loading incidents for this service…</p>
+        ) : incidentError ? (
+          <div role="alert">
+            <p>{incidentError}</p>
+            <button type="button" onClick={loadIncidents}>Try again</button>
+          </div>
+        ) : activeIncidents.length === 0 ? (
+          <p>{incidents.length ? 'No active incidents. Resolved incidents are listed below.' : 'No incidents recorded for this service.'}</p>
+        ) : (
+          <ul>
+            {activeIncidents.map((incident) => (
+              <li key={incident.id}>
+                <div className="dependency-3d-incident-heading">
+                  <strong>{incident.title}</strong>
+                  <span>{incident.severity} · {incident.status}</span>
+                </div>
+                {incident.description && <p>{incident.description}</p>}
+                <small>
+                  {incident.occurrenceCount} recorded failure{incident.occurrenceCount === 1 ? '' : 's'}
+                  {' · Last failure '}{new Date(incident.lastFailureAt).toLocaleString()}
+                </small>
+                <button
+                  type="button"
+                  onClick={() => onRequestInvestigation?.({
+                    endpointId: service.endpoint.id,
+                    incidentId: incident.id,
+                    serviceName: service.name,
+                    incidentTitle: incident.title,
+                  })}
+                >
+                  Investigate in AI Diagnostics
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {incidents.filter((incident) => incident.status === 'RESOLVED').length > 0 && (
+          <details>
+            <summary>Show {incidents.filter((incident) => incident.status === 'RESOLVED').length} resolved incident(s)</summary>
+            <ul>
+              {incidents.filter((incident) => incident.status === 'RESOLVED').map((incident) => (
+                <li key={incident.id}>
+                  <div className="dependency-3d-incident-heading">
+                    <strong>{incident.title}</strong>
+                    <span>{incident.severity} · Resolved</span>
+                  </div>
+                  <small>{incident.occurrenceCount} recorded failure{incident.occurrenceCount === 1 ? '' : 's'}</small>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
     </section>
   );
@@ -267,7 +359,7 @@ function ServiceDetails({ service, nodes, edges, onSelect }) {
  * Node positions come from the 2D graph layout, so the service topology
  * is not calculated a second time for this view.
  */
-export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onSelectService }) {
+export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onSelectService, onRequestInvestigation }) {
   const positions = useMemo(() => getNodePositions(nodes), [nodes]);
   const selectedService = nodes.find((node) => node.id === selectedServiceId);
   const xrStore = useMemo(() => createXRStore({ offerSession: false, emulate: false }), []);
@@ -372,6 +464,7 @@ export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onS
         nodes={nodes}
         edges={edges}
         onSelect={onSelectService}
+        onRequestInvestigation={onRequestInvestigation}
       />
       <p className="dependency-3d-controls-hint">
         Drag to rotate · Scroll or pinch to zoom · Right-drag or two-finger drag to move · Tap or click a node to inspect it

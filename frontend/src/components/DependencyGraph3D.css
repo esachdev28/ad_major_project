@@ -245,6 +245,98 @@
   grid-column: 1 / -1;
 }
 
+.dependency-3d-incidents {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #26334b;
+}
+
+.dependency-3d-incidents h5 {
+  margin: 0 0 0.65rem;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.dependency-3d-incidents p,
+.dependency-3d-incidents small {
+  color: #a8b5c9;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.dependency-3d-incidents ul {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dependency-3d-incidents li {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #101827;
+}
+
+.dependency-3d-incident-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.8rem;
+}
+
+.dependency-3d-incident-heading strong {
+  color: #f8fafc;
+  font-size: 0.82rem;
+}
+
+.dependency-3d-incident-heading span {
+  color: #fbbf24;
+  font-size: 0.72rem;
+}
+
+.dependency-3d-incidents li > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.dependency-3d-incidents button {
+  justify-self: start;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  background: #142744;
+  color: #bfdbfe;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.dependency-3d-incidents button:focus-visible,
+.dependency-3d-incidents summary:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.dependency-3d-incidents details {
+  margin-top: 0.75rem;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+}
+
+.dependency-3d-incidents summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.dependency-3d-incidents details ul {
+  margin-top: 0.6rem;
+}
+
 .dependency-3d-details-empty {
   margin-top: 1rem;
   padding: 1rem;

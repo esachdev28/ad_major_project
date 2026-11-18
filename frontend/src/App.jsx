@@ -37,6 +37,7 @@ import { getCurrentUser } from './services/api';
 export default function App() {
   const [activeItem, setActiveItem] = useState('Dashboard');
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+  const [diagnosticsContext, setDiagnosticsContext] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
@@ -85,9 +86,14 @@ export default function App() {
       ) : activeItem === 'Contract Analysis' ? (
         <Contracts />
       ) : activeItem === 'Dependencies' ? (
-        <Dependencies />
+        <Dependencies
+          onRequestIncidentInvestigation={(context) => {
+            setDiagnosticsContext(context);
+            setActiveItem('AI Diagnostics');
+          }}
+        />
       ) : activeItem === 'AI Diagnostics' ? (
-        <Diagnostics />
+        <Diagnostics incidentContext={diagnosticsContext} />
       ) : (
         <Dashboard refreshKey={dashboardRefreshKey} onNavigateToEndpoints={() => setActiveItem('API Endpoints')} />
       )}

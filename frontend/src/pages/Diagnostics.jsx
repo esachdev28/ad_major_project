@@ -10,7 +10,7 @@ import {
   checkHealth,
 } from '../services/api';
 
-export default function Diagnostics() {
+export default function Diagnostics({ incidentContext }) {
   const [aiStatus, setAiStatus] = useState(null);
   const [mcpTools, setMcpTools] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
@@ -74,6 +74,16 @@ export default function Diagnostics() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!incidentContext) return;
+
+    setSelectedEndpointId(incidentContext.endpointId || '');
+    setSelectedIncidentId(incidentContext.incidentId || '');
+    setQuery(
+      `Explain incident "${incidentContext.incidentTitle}" affecting ${incidentContext.serviceName}. What verified evidence and possible causes should I review?`
+    );
+  }, [incidentContext]);
 
   const handleRunInvestigation = async (e) => {
     e.preventDefault();
