@@ -417,7 +417,12 @@ export default function Dependencies() {
               </div>
             ) : (
               <Suspense fallback={<div style={{ minHeight: 220, display: 'grid', placeItems: 'center', color: '#94a3b8' }}>Loading 3D graph…</div>}>
-                <DependencyGraph3D nodes={graphLayout.nodes} edges={graphLayout.edges} />
+                <DependencyGraph3D
+                  nodes={graphLayout.nodes}
+                  edges={graphLayout.edges}
+                  selectedServiceId={selectedServiceId}
+                  onSelectService={selectService}
+                />
               </Suspense>
             )
           ) : services.length === 0 ? (

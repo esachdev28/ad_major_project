@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { CanvasTexture } from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getServiceHealth, SERVICE_HEALTH_STATES } from '../utils/serviceHealth';
 import './DependencyGraph3D.css';
 
@@ -54,12 +55,21 @@ function ServiceLabel({ name, health }) {
   );
 }
 
-function ServiceNode({ node, position }) {
+function ServiceNode({ node, position, isSelected, onSelect }) {
   const health = getServiceHealth(node);
+  const { gl } = useThree();
 
   return (
     <group position={position}>
-      <mesh>
+      <mesh
+        scale={isSelected ? 1.4 : 1}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect(node.id);
+        }}
+        onPointerOver={() => { gl.domElement.style.cursor = 'pointer'; }}
+        onPointerOut={() => { gl.domElement.style.cursor = ''; }}
+      >
         <sphereGeometry args={[0.22, 24, 24]} />
         <meshStandardMaterial color={SERVICE_HEALTH_STATES[health].color} roughness={0.38} metalness={0.15} />
       </mesh>
@@ -71,10 +81,12 @@ function ServiceNode({ node, position }) {
 function DependencyEdge({ edge, positions }) {
   const start = positions.get(edge.providerId);
   const end = positions.get(edge.consumerId);
+  const linePositions = useMemo(
+    () => (start && end ? new Float32Array([...start, ...end]) : null),
+    [end, start]
+  );
 
-  if (!start || !end) return null;
-
-  const linePositions = new Float32Array([...start, ...end]);
+  if (!linePositions) return null;
 
   return (
     <line>
@@ -109,32 +121,151 @@ function FitGraphCamera({ positions }) {
   return null;
 }
 
+function GraphControls() {
+  const { camera, gl } = useThree();
+  const controls = useMemo(() => new OrbitControls(camera, gl.domElement), [camera, gl]);
+
+  useEffect(() => {
+    controls.enableDamping = true;
+    controls.enablePan = true;
+    controls.enableZoom = true;
+    controls.minDistance = 3;
+    controls.maxDistance = 80;
+    controls.update();
+
+    return () => controls.dispose();
+  }, [controls]);
+
+  useFrame(() => controls.update());
+
+  return null;
+}
+
+function ServiceDetails({ service, nodes, edges, onSelect }) {
+  if (!service) {
+    return <p className="dependency-3d-details-empty">Select a service node to inspect its details.</p>;
+  }
+
+  const health = getServiceHealth(service);
+  const latestCheck = service.endpoint?.healthChecks?.[0];
+  const incidents = service.endpoint?.incidents || [];
+  const serviceNames = new Map(nodes.map((node) => [node.id, node.name]));
+  const dependencies = edges
+    .filter((edge) => edge.consumerId === service.id)
+    .map((edge) => edge.provider?.name || serviceNames.get(edge.providerId))
+    .filter(Boolean);
+  const consumers = edges
+    .filter((edge) => edge.providerId === service.id)
+    .map((edge) => edge.consumer?.name || serviceNames.get(edge.consumerId))
+    .filter(Boolean);
+
+  return (
+    <section className="dependency-3d-service-details" aria-live="polite">
+      <div className="dependency-3d-details-heading">
+        <div>
+          <p className="dependency-3d-details-eyebrow">Selected service</p>
+          <h4>{service.name}</h4>
+        </div>
+        <span className={`dependency-3d-status dependency-3d-status-${health.toLowerCase()}`}>
+          {SERVICE_HEALTH_STATES[health].label}
+        </span>
+      </div>
+
+      <label className="dependency-3d-service-picker">
+        Inspect another service
+        <select value={service.id} onChange={(event) => onSelect(event.target.value)}>
+          {nodes.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}
+        </select>
+      </label>
+
+      <div className="dependency-3d-details-grid">
+        <div>
+          <span>Criticality</span>
+          <strong>{service.criticality || 'Not set'}</strong>
+        </div>
+        <div>
+          <span>Owner team</span>
+          <strong>{service.ownerTeam || 'Not assigned'}</strong>
+        </div>
+        <div className="dependency-3d-detail-wide">
+          <span>Linked endpoint</span>
+          {service.endpoint ? (
+            <code>{service.endpoint.method} {service.endpoint.url}</code>
+          ) : (
+            <strong>No endpoint linked</strong>
+          )}
+        </div>
+        <div className="dependency-3d-detail-wide">
+          <span>Latest monitoring check</span>
+          {latestCheck ? (
+            <strong>
+              {latestCheck.isHealthy ? 'Healthy' : 'Failed'}
+              {latestCheck.statusCode ? ` · HTTP ${latestCheck.statusCode}` : ''}
+              {typeof latestCheck.latency === 'number' ? ` · ${latestCheck.latency} ms` : ''}
+            </strong>
+          ) : (
+            <strong>No check recorded</strong>
+          )}
+        </div>
+        <div>
+          <span>Depends on</span>
+          <strong>{dependencies.length ? dependencies.join(', ') : 'No providers registered'}</strong>
+        </div>
+        <div>
+          <span>Consumers</span>
+          <strong>{consumers.length ? consumers.join(', ') : 'No consumers registered'}</strong>
+        </div>
+        <div className="dependency-3d-detail-wide">
+          <span>Active incidents</span>
+          <strong>
+            {incidents.length
+              ? incidents.map((incident) => `${incident.title} (${incident.severity})`).join(', ')
+              : 'None'}
+          </strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /**
  * Renders the existing dependency graph layout in a Three.js scene.
  * Node positions come from the 2D graph layout, so the service topology
  * is not calculated a second time for this view.
  */
-export default function DependencyGraph3D({ nodes, edges }) {
+export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onSelectService }) {
   const positions = useMemo(() => getNodePositions(nodes), [nodes]);
-  return (
-    <div className="dependency-3d-container" aria-label="Three-dimensional service dependency graph">
-      <Canvas
-        camera={{ position: [0, 1.2, 9], fov: 42 }}
-        dpr={[1, 1.5]}
-        fallback={<p className="dependency-3d-fallback">3D rendering is unavailable in this browser.</p>}
-      >
-        <color attach="background" args={['#101623']} />
-        <ambientLight intensity={1.2} />
-        <directionalLight position={[4, 6, 8]} intensity={2} />
-        <FitGraphCamera positions={positions} />
+  const selectedService = nodes.find((node) => node.id === selectedServiceId);
 
-        {edges.map((edge) => (
-          <DependencyEdge key={edge.id} edge={edge} positions={positions} />
-        ))}
-        {nodes.map((node) => (
-          <ServiceNode key={node.id} node={node} position={positions.get(node.id)} />
-        ))}
-      </Canvas>
+  return (
+    <div className="dependency-3d-container">
+      <div className="dependency-3d-canvas-shell" role="region" aria-label="Three-dimensional service dependency graph">
+        <Canvas
+          camera={{ position: [0, 1.2, 9], fov: 42 }}
+          dpr={[1, 1.5]}
+          onPointerMissed={() => onSelectService('')}
+          fallback={<p className="dependency-3d-fallback">3D rendering is unavailable in this browser.</p>}
+        >
+          <color attach="background" args={['#101623']} />
+          <ambientLight intensity={1.2} />
+          <directionalLight position={[4, 6, 8]} intensity={2} />
+          <FitGraphCamera positions={positions} />
+          <GraphControls />
+
+          {edges.map((edge) => (
+            <DependencyEdge key={edge.id} edge={edge} positions={positions} />
+          ))}
+          {nodes.map((node) => (
+            <ServiceNode
+              key={node.id}
+              node={node}
+              position={positions.get(node.id)}
+              isSelected={node.id === selectedServiceId}
+              onSelect={onSelectService}
+            />
+          ))}
+        </Canvas>
+      </div>
       <div className="dependency-3d-health-legend" aria-label="Service health legend">
         {Object.entries(SERVICE_HEALTH_STATES).map(([state, health]) => (
           <span key={state}>
@@ -145,6 +276,15 @@ export default function DependencyGraph3D({ nodes, edges }) {
       </div>
       <p className="dependency-3d-caption">
         Node colors use the latest monitoring check and active incident data. Services without a check are not monitored.
+      </p>
+      <ServiceDetails
+        service={selectedService}
+        nodes={nodes}
+        edges={edges}
+        onSelect={onSelectService}
+      />
+      <p className="dependency-3d-controls-hint">
+        Drag to rotate · Scroll or pinch to zoom · Right-drag or two-finger drag to move · Tap or click a node to inspect it
       </p>
     </div>
   );
