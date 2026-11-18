@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { createXRStore, IfInSessionMode, useXR, XR } from '@react-three/xr';
 import { CanvasTexture } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { getServiceHealth, SERVICE_HEALTH_STATES } from '../utils/serviceHealth';
+import { checkWebXRSupport } from '../utils/webXRSupport';
 import './DependencyGraph3D.css';
 
 function getNodePositions(nodes) {
@@ -141,6 +143,38 @@ function GraphControls() {
   return null;
 }
 
+function DependencyScene({ nodes, edges, positions, selectedServiceId, onSelectService }) {
+  const isInVR = useXR((state) => state.session?.mode === 'immersive-vr');
+  const halfWidth = Math.max(...Array.from(positions.values()).map(([x]) => Math.abs(x)), 1);
+  const vrScale = Math.min(1, 6 / halfWidth);
+
+  return (
+    <>
+      <IfInSessionMode deny="immersive-vr">
+        <FitGraphCamera positions={positions} />
+        <GraphControls />
+      </IfInSessionMode>
+      <group
+        position={isInVR ? [0, 1.5, -4] : [0, 0, 0]}
+        scale={isInVR ? vrScale : 1}
+      >
+        {edges.map((edge) => (
+          <DependencyEdge key={edge.id} edge={edge} positions={positions} />
+        ))}
+        {nodes.map((node) => (
+          <ServiceNode
+            key={node.id}
+            node={node}
+            position={positions.get(node.id)}
+            isSelected={node.id === selectedServiceId}
+            onSelect={onSelectService}
+          />
+        ))}
+      </group>
+    </>
+  );
+}
+
 function ServiceDetails({ service, nodes, edges, onSelect }) {
   if (!service) {
     return <p className="dependency-3d-details-empty">Select a service node to inspect its details.</p>;
@@ -236,9 +270,71 @@ function ServiceDetails({ service, nodes, edges, onSelect }) {
 export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onSelectService }) {
   const positions = useMemo(() => getNodePositions(nodes), [nodes]);
   const selectedService = nodes.find((node) => node.id === selectedServiceId);
+  const xrStore = useMemo(() => createXRStore({ offerSession: false, emulate: false }), []);
+  const [xrSupport, setXrSupport] = useState('checking');
+  const [isStartingVr, setIsStartingVr] = useState(false);
+  const [isVrActive, setIsVrActive] = useState(false);
+  const [vrError, setVrError] = useState('');
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function checkVrSupport() {
+      const support = await checkWebXRSupport(window.isSecureContext, navigator.xr);
+      if (!isCancelled) setXrSupport(support);
+    }
+
+    checkVrSupport();
+    return () => { isCancelled = true; };
+  }, []);
+
+  useEffect(() => xrStore.subscribe((state) => {
+    setIsVrActive(state.session?.mode === 'immersive-vr');
+  }), [xrStore]);
+
+  const handleEnterVr = async () => {
+    if (isVrActive) {
+      try {
+        await xrStore.getState().session?.end();
+      } catch (_) {
+        setVrError('The VR session could not be closed. Use the headset browser controls to exit it.');
+      }
+      return;
+    }
+
+    setIsStartingVr(true);
+    setVrError('');
+    try {
+      const session = await xrStore.enterVR();
+      if (!session) {
+        setVrError('The browser could not start a VR session. Check the headset connection and browser permissions, or continue in 3D mode.');
+      }
+    } catch (_) {
+      setVrError('The browser could not start a VR session. Check the headset connection and browser permissions, or continue in 3D mode.');
+    } finally {
+      setIsStartingVr(false);
+    }
+  };
 
   return (
     <div className="dependency-3d-container">
+      <div className="dependency-3d-vr-bar">
+        <div>
+          <strong>Virtual reality</strong>
+          <p role="status">
+            {xrSupport === 'checking' && 'Checking whether this browser supports immersive VR…'}
+            {xrSupport === 'supported' && 'This secure browser reports immersive VR support.'}
+            {xrSupport === 'unsupported' && 'Immersive VR is unavailable here. The standard 3D view remains available.'}
+            {xrSupport === 'insecure' && 'VR requires HTTPS on a network device; localhost is also a secure context.'}
+          </p>
+        </div>
+        {xrSupport === 'supported' && (
+          <button type="button" onClick={handleEnterVr} disabled={isStartingVr}>
+            {isStartingVr ? 'Starting VR…' : isVrActive ? 'Exit VR' : 'Enter VR'}
+          </button>
+        )}
+      </div>
+      {vrError && <p className="dependency-3d-vr-error" role="alert">{vrError}</p>}
       <div className="dependency-3d-canvas-shell" role="region" aria-label="Three-dimensional service dependency graph">
         <Canvas
           camera={{ position: [0, 1.2, 9], fov: 42 }}
@@ -249,21 +345,15 @@ export default function DependencyGraph3D({ nodes, edges, selectedServiceId, onS
           <color attach="background" args={['#101623']} />
           <ambientLight intensity={1.2} />
           <directionalLight position={[4, 6, 8]} intensity={2} />
-          <FitGraphCamera positions={positions} />
-          <GraphControls />
-
-          {edges.map((edge) => (
-            <DependencyEdge key={edge.id} edge={edge} positions={positions} />
-          ))}
-          {nodes.map((node) => (
-            <ServiceNode
-              key={node.id}
-              node={node}
-              position={positions.get(node.id)}
-              isSelected={node.id === selectedServiceId}
-              onSelect={onSelectService}
+          <XR store={xrStore}>
+            <DependencyScene
+              nodes={nodes}
+              edges={edges}
+              positions={positions}
+              selectedServiceId={selectedServiceId}
+              onSelectService={onSelectService}
             />
-          ))}
+          </XR>
         </Canvas>
       </div>
       <div className="dependency-3d-health-legend" aria-label="Service health legend">
