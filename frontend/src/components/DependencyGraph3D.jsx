@@ -325,9 +325,10 @@ function ServiceDetails({ service, nodes, edges, onSelect, onRequestInvestigatio
                     incidentId: incident.id,
                     serviceName: service.name,
                     incidentTitle: incident.title,
+                    requestExplanation: true,
                   })}
                 >
-                  Investigate in AI Diagnostics
+                  Explain this incident with AI
                 </button>
               </li>
             ))}

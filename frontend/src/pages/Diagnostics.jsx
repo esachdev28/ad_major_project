@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Header from '../components/Header';
 import {
   getDiagnosticsStatus,
@@ -28,6 +28,7 @@ export default function Diagnostics({ incidentContext }) {
   const [isInvestigating, setIsInvestigating] = useState(false);
   const [backendStatus, setBackendStatus] = useState('checking');
   const [error, setError] = useState(null);
+  const requestedIncidentId = useRef(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -51,7 +52,7 @@ export default function Diagnostics({ incidentContext }) {
       if (histRes.status === 'fulfilled' && histRes.value.success) {
         const list = histRes.value.data || [];
         setHistory(list);
-        if (list.length > 0 && !activeReport) {
+        if (list.length > 0 && !activeReport && !requestedIncidentId.current) {
           setActiveReport(list[0]);
         }
       }
@@ -75,36 +76,57 @@ export default function Diagnostics({ incidentContext }) {
     loadData();
   }, [loadData]);
 
-  useEffect(() => {
-    if (!incidentContext) return;
-
-    setSelectedEndpointId(incidentContext.endpointId || '');
-    setSelectedIncidentId(incidentContext.incidentId || '');
-    setQuery(
-      `Explain incident "${incidentContext.incidentTitle}" affecting ${incidentContext.serviceName}. What verified evidence and possible causes should I review?`
-    );
-  }, [incidentContext]);
-
-  const handleRunInvestigation = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  const runInvestigation = useCallback(async ({ query: investigationQuery, endpointId, incidentId }) => {
+    if (!investigationQuery.trim()) return;
     setIsInvestigating(true);
     setError(null);
+    setActiveReport(null);
     try {
       const res = await runDiagnosticInvestigation({
-        query: query.trim(),
-        endpointId: selectedEndpointId || undefined,
-        incidentId: selectedIncidentId || undefined,
+        query: investigationQuery.trim(),
+        endpointId: endpointId || undefined,
+        incidentId: incidentId || undefined,
       });
-      if (res.success) {
+      if (res?.success && res.data) {
         setActiveReport(res.data);
         setHistory((prev) => [res.data, ...prev]);
+      } else {
+        setError(res?.message || 'Investigation did not return a diagnostic report.');
       }
     } catch (err) {
       setError(err.message || 'Investigation failed.');
     } finally {
       setIsInvestigating(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!incidentContext) return;
+
+    const investigationQuery = `Explain incident "${incidentContext.incidentTitle}" affecting ${incidentContext.serviceName}. What verified evidence and possible causes should I review?`;
+    setSelectedEndpointId(incidentContext.endpointId || '');
+    setSelectedIncidentId(incidentContext.incidentId || '');
+    setQuery(investigationQuery);
+
+    if (!incidentContext.requestExplanation || !incidentContext.incidentId) return;
+    if (requestedIncidentId.current === incidentContext.incidentId) return;
+
+    // React StrictMode runs effects twice in development; this keeps one request per selection.
+    requestedIncidentId.current = incidentContext.incidentId;
+    runInvestigation({
+      query: investigationQuery,
+      endpointId: incidentContext.endpointId,
+      incidentId: incidentContext.incidentId,
+    });
+  }, [incidentContext, runInvestigation]);
+
+  const handleRunInvestigation = (event) => {
+    event.preventDefault();
+    runInvestigation({
+      query,
+      endpointId: selectedEndpointId,
+      incidentId: selectedIncidentId,
+    });
   };
 
   return (
