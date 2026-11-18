@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { CanvasTexture } from 'three';
+import { getServiceHealth, SERVICE_HEALTH_STATES } from '../utils/serviceHealth';
 import './DependencyGraph3D.css';
 
 function getNodePositions(nodes) {
@@ -23,37 +24,46 @@ function getNodePositions(nodes) {
   ]));
 }
 
-function ServiceLabel({ name }) {
+function ServiceLabel({ name, health }) {
   const texture = useMemo(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 512;
-    canvas.height = 96;
+    canvas.height = 128;
     const context = canvas.getContext('2d');
     context.fillStyle = '#f8fafc';
-    context.font = '600 34px Arial, sans-serif';
+    context.font = '600 32px Arial, sans-serif';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText(name, canvas.width / 2, canvas.height / 2, canvas.width - 20);
+    context.fillText(name, canvas.width / 2, 43, canvas.width - 24);
+    context.fillStyle = SERVICE_HEALTH_STATES[health].color;
+    context.beginPath();
+    context.arc(198, 94, 8, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = '#cbd5e1';
+    context.font = '600 23px Arial, sans-serif';
+    context.fillText(SERVICE_HEALTH_STATES[health].label.toUpperCase(), 270, 94);
     return new CanvasTexture(canvas);
-  }, [name]);
+  }, [health, name]);
 
   useEffect(() => () => texture.dispose(), [texture]);
 
   return (
-    <sprite position={[0, 0.42, 0]} scale={[2.45, 0.46, 1]}>
+    <sprite position={[0, 0.58, 0]} scale={[2.6, 0.65, 1]}>
       <spriteMaterial map={texture} transparent depthWrite={false} />
     </sprite>
   );
 }
 
 function ServiceNode({ node, position }) {
+  const health = getServiceHealth(node);
+
   return (
     <group position={position}>
       <mesh>
         <sphereGeometry args={[0.22, 24, 24]} />
-        <meshStandardMaterial color="#3b82f6" roughness={0.38} metalness={0.15} />
+        <meshStandardMaterial color={SERVICE_HEALTH_STATES[health].color} roughness={0.38} metalness={0.15} />
       </mesh>
-      <ServiceLabel name={node.name} />
+      <ServiceLabel name={node.name} health={health} />
     </group>
   );
 }
@@ -125,8 +135,16 @@ export default function DependencyGraph3D({ nodes, edges }) {
           <ServiceNode key={node.id} node={node} position={positions.get(node.id)} />
         ))}
       </Canvas>
+      <div className="dependency-3d-health-legend" aria-label="Service health legend">
+        {Object.entries(SERVICE_HEALTH_STATES).map(([state, health]) => (
+          <span key={state}>
+            <i style={{ backgroundColor: health.color }} aria-hidden="true" />
+            {health.label}
+          </span>
+        ))}
+      </div>
       <p className="dependency-3d-caption">
-        Services are shown as nodes; connecting lines follow provider-to-consumer dependencies.
+        Node colors use the latest monitoring check and active incident data. Services without a check are not monitored.
       </p>
     </div>
   );

@@ -57,6 +57,27 @@
   touch-action: pan-y;
 }
 
+.dependency-3d-health-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0.55rem 0.75rem 0;
+  color: #cbd5e1;
+  font-size: 0.75rem;
+}
+
+.dependency-3d-health-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.dependency-3d-health-legend i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+}
+
 .dependency-3d-caption,
 .dependency-3d-fallback {
   padding: 0.55rem 0.75rem;
