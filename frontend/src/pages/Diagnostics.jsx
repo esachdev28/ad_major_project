@@ -129,6 +129,9 @@ export default function Diagnostics({ incidentContext }) {
     });
   };
 
+  const dependencyImpact = activeReport?.evidenceContext?.dependencyImpact;
+  const dependencyNotes = activeReport?.evidenceContext?.missingDataNotes || [];
+
   return (
     <div className="main-wrapper">
       <Header
@@ -361,6 +364,9 @@ export default function Diagnostics({ incidentContext }) {
                     <h4 style={{ margin: '0 0 0.65rem', color: '#fbbf24', fontSize: '0.88rem' }}>
                       🔍 Diagnostic Hypotheses (Inferred)
                     </h4>
+                    <p style={{ margin: '0 0 0.65rem', color: '#cbd5e1', fontSize: '0.75rem' }}>
+                      These are possible explanations from the available evidence, not confirmed root causes.
+                    </p>
                     <ul style={{ margin: 0, paddingLeft: '1.15rem', color: '#cbd5e1', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
                       {activeReport.hypotheses.map((hyp, idx) => (
                         <li key={idx}>{hyp}</li>
@@ -381,7 +387,7 @@ export default function Diagnostics({ incidentContext }) {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                     <h4 style={{ margin: 0, color: '#93c5fd', fontSize: '0.88rem' }}>
-                      💡 Recommended Next Steps
+                      💡 Suggested Investigation Steps
                     </h4>
                     <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
                       Human approval required for consequential actions
@@ -392,6 +398,39 @@ export default function Diagnostics({ incidentContext }) {
                       <li key={idx}>{rec}</li>
                     ))}
                   </ul>
+                </div>
+
+                {/* Dependency impact is displayed from recorded graph data, not inferred as an outage. */}
+                <div
+                  style={{
+                    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+                    border: '1px solid rgba(139, 92, 246, 0.35)',
+                    borderRadius: '8px',
+                    padding: '1rem',
+                    marginBottom: '1rem',
+                  }}
+                >
+                  <h4 style={{ margin: '0 0 0.65rem', color: '#c4b5fd', fontSize: '0.88rem' }}>
+                    Potential Downstream Impact (Dependency Evidence)
+                  </h4>
+                  {dependencyImpact ? (
+                    <div style={{ display: 'grid', gap: '0.55rem', color: '#cbd5e1', fontSize: '0.82rem' }}>
+                      <p>
+                        {dependencyImpact.serviceName} · {dependencyImpact.riskLevel} risk · Score {dependencyImpact.riskScore}/100
+                        {dependencyImpact.criticality ? ` · ${dependencyImpact.criticality} criticality` : ''}
+                      </p>
+                      <p><strong>Direct consumers:</strong> {dependencyImpact.directConsumers?.length ? dependencyImpact.directConsumers.join(', ') : 'None recorded'}</p>
+                      <p><strong>Transitive consumers:</strong> {dependencyImpact.transitiveConsumers?.length ? dependencyImpact.transitiveConsumers.join(', ') : 'None recorded'}</p>
+                      <small style={{ color: '#a8b5c9' }}>
+                        These are registered dependency relationships; they do not confirm that a consumer experienced an outage.
+                      </small>
+                    </div>
+                  ) : (
+                    <p style={{ color: '#cbd5e1', fontSize: '0.82rem' }}>
+                      No dependency impact result was available for this report.
+                      {dependencyNotes.length > 0 ? ` ${dependencyNotes.join(' ')}` : ''}
+                    </p>
+                  )}
                 </div>
 
                 {/* Sanitized Evidence Audit Snapshot */}
