@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Header from '../components/Header';
 import {
   getDiagnosticsStatus,
@@ -10,7 +10,7 @@ import {
   checkHealth,
 } from '../services/api';
 
-export default function Diagnostics() {
+export default function Diagnostics({ incidentContext, onReturnToExplorer }) {
   const [aiStatus, setAiStatus] = useState(null);
   const [mcpTools, setMcpTools] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
@@ -28,6 +28,7 @@ export default function Diagnostics() {
   const [isInvestigating, setIsInvestigating] = useState(false);
   const [backendStatus, setBackendStatus] = useState('checking');
   const [error, setError] = useState(null);
+  const requestedIncidentId = useRef(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -51,7 +52,7 @@ export default function Diagnostics() {
       if (histRes.status === 'fulfilled' && histRes.value.success) {
         const list = histRes.value.data || [];
         setHistory(list);
-        if (list.length > 0 && !activeReport) {
+        if (list.length > 0 && !activeReport && !requestedIncidentId.current) {
           setActiveReport(list[0]);
         }
       }
@@ -75,27 +76,61 @@ export default function Diagnostics() {
     loadData();
   }, [loadData]);
 
-  const handleRunInvestigation = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  const runInvestigation = useCallback(async ({ query: investigationQuery, endpointId, incidentId }) => {
+    if (!investigationQuery.trim()) return;
     setIsInvestigating(true);
     setError(null);
+    setActiveReport(null);
     try {
       const res = await runDiagnosticInvestigation({
-        query: query.trim(),
-        endpointId: selectedEndpointId || undefined,
-        incidentId: selectedIncidentId || undefined,
+        query: investigationQuery.trim(),
+        endpointId: endpointId || undefined,
+        incidentId: incidentId || undefined,
       });
-      if (res.success) {
+      if (res?.success && res.data) {
         setActiveReport(res.data);
         setHistory((prev) => [res.data, ...prev]);
+      } else {
+        setError(res?.message || 'Investigation did not return a diagnostic report.');
       }
     } catch (err) {
       setError(err.message || 'Investigation failed.');
     } finally {
       setIsInvestigating(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!incidentContext) return;
+
+    const investigationQuery = `Explain incident "${incidentContext.incidentTitle}" affecting ${incidentContext.serviceName}. What verified evidence and possible causes should I review?`;
+    setSelectedEndpointId(incidentContext.endpointId || '');
+    setSelectedIncidentId(incidentContext.incidentId || '');
+    setQuery(investigationQuery);
+
+    if (!incidentContext.requestExplanation || !incidentContext.incidentId) return;
+    if (requestedIncidentId.current === incidentContext.incidentId) return;
+
+    // React StrictMode runs effects twice in development; this keeps one request per selection.
+    requestedIncidentId.current = incidentContext.incidentId;
+    runInvestigation({
+      query: investigationQuery,
+      endpointId: incidentContext.endpointId,
+      incidentId: incidentContext.incidentId,
+    });
+  }, [incidentContext, runInvestigation]);
+
+  const handleRunInvestigation = (event) => {
+    event.preventDefault();
+    runInvestigation({
+      query,
+      endpointId: selectedEndpointId,
+      incidentId: selectedIncidentId,
+    });
   };
+
+  const dependencyImpact = activeReport?.evidenceContext?.dependencyImpact;
+  const dependencyNotes = activeReport?.evidenceContext?.missingDataNotes || [];
 
   return (
     <div className="main-wrapper">
@@ -298,6 +333,17 @@ export default function Diagnostics() {
                   </div>
                 </div>
 
+                {incidentContext && onReturnToExplorer && (
+                  <button
+                    type="button"
+                    className="endpoint-secondary"
+                    style={{ marginBottom: '1.25rem' }}
+                    onClick={() => onReturnToExplorer(activeReport)}
+                  >
+                    View this explanation in the 3D dependency explorer
+                  </button>
+                )}
+
                 {/* Verified Facts vs Hypotheses (Evidence Integrity) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
                   <div
@@ -329,6 +375,9 @@ export default function Diagnostics() {
                     <h4 style={{ margin: '0 0 0.65rem', color: '#fbbf24', fontSize: '0.88rem' }}>
                       🔍 Diagnostic Hypotheses (Inferred)
                     </h4>
+                    <p style={{ margin: '0 0 0.65rem', color: '#cbd5e1', fontSize: '0.75rem' }}>
+                      These are possible explanations from the available evidence, not confirmed root causes.
+                    </p>
                     <ul style={{ margin: 0, paddingLeft: '1.15rem', color: '#cbd5e1', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
                       {activeReport.hypotheses.map((hyp, idx) => (
                         <li key={idx}>{hyp}</li>
@@ -349,7 +398,7 @@ export default function Diagnostics() {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                     <h4 style={{ margin: 0, color: '#93c5fd', fontSize: '0.88rem' }}>
-                      💡 Recommended Next Steps
+                      💡 Suggested Investigation Steps
                     </h4>
                     <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
                       Human approval required for consequential actions
@@ -360,6 +409,39 @@ export default function Diagnostics() {
                       <li key={idx}>{rec}</li>
                     ))}
                   </ul>
+                </div>
+
+                {/* Dependency impact is displayed from recorded graph data, not inferred as an outage. */}
+                <div
+                  style={{
+                    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+                    border: '1px solid rgba(139, 92, 246, 0.35)',
+                    borderRadius: '8px',
+                    padding: '1rem',
+                    marginBottom: '1rem',
+                  }}
+                >
+                  <h4 style={{ margin: '0 0 0.65rem', color: '#c4b5fd', fontSize: '0.88rem' }}>
+                    Potential Downstream Impact (Dependency Evidence)
+                  </h4>
+                  {dependencyImpact ? (
+                    <div style={{ display: 'grid', gap: '0.55rem', color: '#cbd5e1', fontSize: '0.82rem' }}>
+                      <p>
+                        {dependencyImpact.serviceName} · {dependencyImpact.riskLevel} risk · Score {dependencyImpact.riskScore}/100
+                        {dependencyImpact.criticality ? ` · ${dependencyImpact.criticality} criticality` : ''}
+                      </p>
+                      <p><strong>Direct consumers:</strong> {dependencyImpact.directConsumers?.length ? dependencyImpact.directConsumers.join(', ') : 'None recorded'}</p>
+                      <p><strong>Transitive consumers:</strong> {dependencyImpact.transitiveConsumers?.length ? dependencyImpact.transitiveConsumers.join(', ') : 'None recorded'}</p>
+                      <small style={{ color: '#a8b5c9' }}>
+                        These are registered dependency relationships; they do not confirm that a consumer experienced an outage.
+                      </small>
+                    </div>
+                  ) : (
+                    <p style={{ color: '#cbd5e1', fontSize: '0.82rem' }}>
+                      No dependency impact result was available for this report.
+                      {dependencyNotes.length > 0 ? ` ${dependencyNotes.join(' ')}` : ''}
+                    </p>
+                  )}
                 </div>
 
                 {/* Sanitized Evidence Audit Snapshot */}
