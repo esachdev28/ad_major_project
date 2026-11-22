@@ -69,7 +69,7 @@ router.get('/stats', async (req, res) => {
       ? Math.round(latencyAggregate._avg.latency)
       : 0;
 
-    // Check Docker Worker status via Redis heartbeat
+    // Check Docker Worker status via Redis heartbeat or in-process background worker
     let workerHeartbeat = null;
     let workerOnline = false;
     try {
@@ -80,6 +80,15 @@ router.get('/stats', async (req, res) => {
         workerOnline = diffMs < 60000;
       }
     } catch (_) {}
+
+    // Fallback: If Redis is unavailable (e.g. Render cloud), check internal worker heartbeat
+    if (!workerOnline && global.__API_SENTINEL_LAST_HEARTBEAT) {
+      const diffMs = Date.now() - global.__API_SENTINEL_LAST_HEARTBEAT;
+      if (diffMs < 60000) {
+        workerOnline = true;
+        workerHeartbeat = new Date(global.__API_SENTINEL_LAST_HEARTBEAT).toISOString();
+      }
+    }
 
     return res.status(200).json({
       success: true,

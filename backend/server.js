@@ -152,11 +152,43 @@ app.use((err, req, res, next) => {
 });
 
 // ==========================================
+// In-Process Background Monitoring Runner (Cloud & Fallback)
+// ==========================================
+let internalWorkerTimer = null;
+global.__API_SENTINEL_LAST_HEARTBEAT = Date.now();
+
+function startBackgroundWorker() {
+  console.log('⚡ Starting background monitoring worker (cloud / in-process mode)...');
+  const { runMonitoringCycle } = require('./workers/monitoringWorker');
+
+  // Trigger initial monitoring cycle 3s after boot
+  setTimeout(async () => {
+    try {
+      global.__API_SENTINEL_LAST_HEARTBEAT = Date.now();
+      await runMonitoringCycle();
+    } catch (e) {
+      console.error('[Internal Worker] Initial cycle error:', e.message);
+    }
+  }, 3000);
+
+  // Recurring tick every 20 seconds
+  internalWorkerTimer = setInterval(async () => {
+    try {
+      global.__API_SENTINEL_LAST_HEARTBEAT = Date.now();
+      await runMonitoringCycle();
+    } catch (err) {
+      console.error('[Internal Worker] Recurring cycle error:', err.message);
+    }
+  }, 20000);
+}
+
+// ==========================================
 // Graceful Process Termination
 // ==========================================
 // Ensures Prisma disconnects properly when Node.js process is stopped (Ctrl+C / SIGTERM)
 const handleShutdown = async (signal) => {
   console.log(`\n[${new Date().toISOString()}] Received ${signal}. Disconnecting Prisma client...`);
+  if (internalWorkerTimer) clearInterval(internalWorkerTimer);
   try {
     await prisma.$disconnect();
     console.log('🛡️  Prisma client disconnected gracefully.');
@@ -187,6 +219,10 @@ if (require.main === module) {
     console.log(`🔗 Consumer Integrations:    http://localhost:${PORT}/api/integrations`);
     console.log(`🤖 MCP Diagnostic Server:    http://localhost:${PORT}/api/mcp/tools`);
     console.log(`===============================================`);
+
+    if (process.env.NODE_ENV !== 'test') {
+      startBackgroundWorker();
+    }
   });
 }
 
