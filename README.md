@@ -34,6 +34,7 @@ Imagine modern companies like Netflix, Uber, or Amazon. They run hundreds of ind
 11. [Automated Verification Test Suite (11/11 Passing)](#11-automated-verification-test-suite-1111-passing)
 12. [Cloud Deployment Guide (Render / Railway / Cloudflare)](#12-cloud-deployment-guide-render--railway--cloudflare)
 13. [Project Evaluation & Viva Defense Cheatsheet](#13-project-evaluation--viva-defense-cheatsheet)
+14. [Data Engineering (DE) Integrated Deliverables](#14-data-engineering-de-integrated-deliverables)
 
 ---
 
@@ -399,6 +400,23 @@ This instantly outputs a public HTTPS link (e.g., `https://rapid-alpha-sentinel.
 | **How is breaking-change detection handled?** | Our contract diff engine resolves local `$ref` schemas in OpenAPI 3.0/3.1 specs, compares paths, methods, request bodies, query params, and response schemas, and classifies changes into `BREAKING`, `POTENTIALLY_BREAKING`, or `NON_BREAKING`. |
 | **How is cyclic dependency handled in the service graph?** | We use a cycle-safe Breadth-First Search (BFS) with a `visited` Set to track visited service IDs, preventing infinite loops while calculating blast-radius depth. |
 | **What is Model Context Protocol (MCP)?** | MCP is an open standard that allows AI models to safely invoke backend tools. We implement 7 read-only diagnostic tools using `@modelcontextprotocol/sdk` over `stdio` and HTTP bridge, with strict Zod validation and credential redaction. |
+
+---
+
+## 14. Data Engineering (DE) Integrated Deliverables
+
+All mandatory deliverables for the **Data Engineering (DE)** component have been structured into the dedicated [`DE/`](DE/) directory:
+
+- 📊 **[Database Selection & Justification](DE/DATABASE_SELECTION.md)**: Architectural comparison of PostgreSQL 17 vs MongoDB, ACID guarantees, relational integrity, and time-series suitability.
+- 📐 **[ER Diagram & Data Modeling](DE/ER_DIAGRAM.md)**: Crow's Foot ER Diagram (Mermaid), primary/foreign keys, 1:1, 1:N, and N:M cardinalities, and complete Data Dictionary.
+- 🔍 **[Database Normalization (1NF, 2NF, 3NF)](DE/NORMALIZATION.md)**: Step-by-step transformation from 0NF to 3NF, functional dependency mappings, and anomaly elimination proofs.
+- 💾 **[Complete SQL Schema DDL](DE/schema.sql)**: Pure PostgreSQL DDL script with tables, cascading foreign keys, check constraints, and B-Tree indexes.
+- 🌱 **[Sample Dataset DML](DE/seed_data.sql)**: Realistic initial data populating all 9 relational entities.
+- ⚡ **[10 Project-Specific Queries & Verified Outputs](DE/QUERIES_AND_EXECUTION.md)**: Minimum 10 real queries covering INSERT, UPDATE, DELETE, multi-table JOINs, GROUP BY/HAVING, subqueries, CTEs, Window functions, and graph blast radius with **verified live execution outputs** from PostgreSQL.
+- 🔗 **[Database & Application Integration](DE/DATABASE_INTEGRATION.md)**: Prisma ORM integration, connection pooling, prepared statements, and Express.js request lifecycles.
+- 🛡️ **[Data Integrity & High-Volume Scaling](DE/DATA_INTEGRITY_AND_SCALING.md)**: Domain constraints, index performance plans, and table partitioning architecture.
+
+For full details, open the **[Data Engineering Master Report (DE/README.md)](DE/README.md)**.
 
 ---
 
