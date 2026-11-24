@@ -35,6 +35,7 @@ Imagine modern companies like Netflix, Uber, or Amazon. They run hundreds of ind
 12. [Cloud Deployment Guide (Render / Railway / Cloudflare)](#12-cloud-deployment-guide-render--railway--cloudflare)
 13. [Project Evaluation & Viva Defense Cheatsheet](#13-project-evaluation--viva-defense-cheatsheet)
 14. [Data Engineering (DE) Integrated Deliverables](#14-data-engineering-de-integrated-deliverables)
+15. [API Scout Package Integration (@vedant23/api-scout)](#15-api-scout-package-integration-vedant23api-scout)
 
 ---
 
@@ -78,6 +79,7 @@ Imagine modern companies like Netflix, Uber, or Amazon. They run hundreds of ind
 
 - **Frontend**: React 18, Vite 6, Custom SaaS Dark-Navy Design System (accessible, screen-reader friendly).
 - **Backend API**: Node.js, Express.js, Prisma ORM 6 (`@prisma/client`), `js-yaml`, `ioredis`, `zod`, `jsonwebtoken`, `bcryptjs`.
+- **API Inspection Engine**: API Scout (`@vedant23/api-scout` v1.0.0) — reusable HTTP probe, latency measurement, timeout handling, and response verification package.
 - **Database**: PostgreSQL 17 relational database.
 - **Queue & Distributed Locks**: Redis 7 Alpine (`SET ... NX EX` distributed lock to avoid redundant probes).
 - **Worker**: Containerized background probe runner executing periodic HTTP health evaluations.
@@ -417,6 +419,65 @@ All mandatory deliverables for the **Data Engineering (DE)** component have been
 - 🛡️ **[Data Integrity & High-Volume Scaling](DE/DATA_INTEGRITY_AND_SCALING.md)**: Domain constraints, index performance plans, and table partitioning architecture.
 
 For full details, open the **[Data Engineering Master Report (DE/README.md)](DE/README.md)**.
+
+---
+
+## 15. API Scout Package Integration (@vedant23/api-scout)
+
+API Sentinel integrates **API Scout** (`@vedant23/api-scout`) as its dedicated, reusable endpoint probing and HTTP inspection engine.
+
+### Architectural Division of Responsibilities
+
+| Responsibility Area | Handled by API Scout (`@vedant23/api-scout`) | Handled by API Sentinel |
+| :--- | :--- | :--- |
+| **HTTP Request Dispatch** | `inspectAPI()` executes standardized requests with custom HTTP methods (`GET`, `POST`, `HEAD`, etc.) and custom headers. | Injects user-configured headers after decrypting them. |
+| **Latency Measurement** | High-precision response-time measurement (`responseTime` in milliseconds) capturing time-to-first-byte and full response round-trip. | Computes rolling percentiles (`P50`, `P95`, `P99`) and time-series analytics. |
+| **Timeout Handling** | Clean `AbortController` timeout management with normalized `TIMEOUT` error codes. | Configurable per-endpoint timeout thresholds (default 5,000 ms). |
+| **Status Verification** | Flexible status matching against explicit numbers, status arrays, ranges, or standard 2xx defaults. | Maps results to `isHealthy` boolean and records telemetry. |
+| **Error Normalization** | Structured results (`{ ok, status, responseTime, error, message }`) preventing uncaught exceptions. | Evaluates consecutive failure thresholds, triggers incidents, and auto-recovers. |
+| **Security & Persistence** | *Domain-agnostic* | SSRF Guard (`urlValidator.js`), AES-256-GCM encryption at rest, PostgreSQL storage (Prisma ORM), Redis queue scheduling. |
+
+### How It Is Integrated in Code
+
+In `backend/services/probeService.js`:
+```javascript
+const { inspectAPI } = require('@vedant23/api-scout');
+
+// Inside executeProbe():
+const scoutResult = await inspectAPI(currentUrl, {
+  method: endpoint.method || 'GET',
+  timeout: timeoutMs,
+  expectedStatus: endpoint.expectedStatus || 200,
+  headers: {
+    'User-Agent': 'API-Sentinel-Monitor/1.0',
+    ...customHeaders,
+  },
+});
+
+const statusCode = scoutResult.status;
+const latency = Math.max(1, scoutResult.responseTime);
+const isHealthy = scoutResult.ok;
+```
+
+### Installation
+
+Published and available on the public npm registry:
+
+```bash
+cd backend
+npm install @vedant23/api-scout
+```
+
+In `backend/package.json`:
+```json
+{
+  "dependencies": {
+    "@vedant23/api-scout": "^1.0.0"
+  }
+}
+```
+
+Because Node.js natively supports CommonJS `require()` of ES Modules, API Sentinel imports API Scout seamlessly without requiring build-step transpilation.
 
 ---
 
